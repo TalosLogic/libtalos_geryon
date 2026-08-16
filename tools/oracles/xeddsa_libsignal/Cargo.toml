@@ -1,0 +1,25 @@
+# XEdDSA test-vector oracle. Depends on libsignal (AGPL-3.0) and runs as a
+# SEPARATE process to emit vectors; its output is checked into
+# tests/vectors/. libsignal code is never linked into geryon, read for
+# implementation, or ported (see docs/TEST_ORACLES.md).
+#
+# This tool is NOT part of the CMake build.
+#
+# NOTE: pin the libsignal `tag`/`rev` to a real release and reconcile the
+# `rand`/`rand_core` versions with the one libsignal re-exports (the RNG passed
+# to KeyPair::generate / calculate_signature must implement libsignal's
+# expected RngCore + CryptoRng). Commit Cargo.lock after the first successful
+# build so regeneration is reproducible.
+
+[package]
+name = "xeddsa_libsignal_oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.96.4" }
+# Match libsignal's rand generation so ChaCha20Rng implements the same
+# rand_core::CryptoRng that KeyPair::generate / calculate_signature require.
+rand = "0.9"
+rand_chacha = "0.9"

@@ -1,0 +1,13 @@
+# Descriptor-discipline audit allowlist (GER-M1-09, D-GEN-7).
+#
+# One reviewed false positive per line, as "src/<path>:<lineno>", matching the
+# forbidden-pattern grep in descriptor_discipline.sh.  A line here means a
+# human confirmed the match is NOT a descriptor-discipline violation.
+#
+# Blank lines and lines starting with '#' are ignored.
+#
+# As of GER-M1-09 the primitive-call grep is empty, so there are no entries.
+# Bare 32/64 key-size literals in ratchet/ (DR chain/root/message keys and the
+# 96-byte KDF_RK output) are the suite-INVARIANT key width, not a curve-
+# specific size, so they are outside the forbidden-pattern set and need no
+# entry here; see docs/decisions/double_ratchet.md for the 32-byte key width.

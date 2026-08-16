@@ -1,0 +1,27 @@
+# X3DH DH-stage test-vector oracle. Depends on libsignal (AGPL-3.0)
+# and runs as a SEPARATE process to emit vectors; its output is checked into
+# tests/vectors/. libsignal code is never linked into geryon, read for
+# implementation, or ported (see docs/TEST_ORACLES.md).
+#
+# This tool is NOT part of the CMake build.
+#
+# Scope (D-GEN-6): libsignal's public API exposes per-DH agreements
+# (PrivateKey::calculate_agreement) but NOT the assembled X3DH master secret or
+# its HKDF info string (session init returns an opaque SessionRecord).  So this
+# oracle validates only the prescriptive DH stage (X25519 over the spec's
+# DH1..DH4 pairings); the SK/info composition is not oracle-able and stays
+# covered by geryon's own F-guard KAT and self-vectors.
+#
+# The libsignal tag matches the xeddsa_libsignal oracle so the two share one
+# pinned upstream.  Commit Cargo.lock after the first successful build.
+
+[package]
+name = "x3dh_libsignal_oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.96.4" }
+rand = "0.9"
+rand_chacha = "0.9"
