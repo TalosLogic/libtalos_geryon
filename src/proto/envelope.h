@@ -78,6 +78,37 @@ int gy_bundle_parse(struct gy_prekey_bundle *out,
                     size_t len);
 
 /*
+ * Hybrid prekey bundle wire format (HYBRID_SPEC section 5.4):
+ *   version || suite_id || IK (section 4.2) || SPK (section 5.1) || OPK (4.1)
+ * where a hybrid public key is pkid || curve_type || curve_pk || mlkem_ek, the
+ * identity adds || mldsa_pk, and the SPK adds ik_id || timestamp || flags ||
+ * ed_sig || mldsa_sig after its public key.  Unlike the classical bundle the
+ * layout is FIXED size: the OPK is always present, all-zeros (pkid 0) when
+ * absent.  wire_len sizes a buffer; put/parse serialize/deserialize STRUCTURE
+ * only (dual-signature + PKID validation stays gy_hybrid_bundle_validate).
+ */
+size_t gy_hybrid_bundle_wire_len(const struct gy_suite_desc *desc);
+int gy_hybrid_bundle_put(uint8_t *out, size_t cap, size_t *outlen,
+                         const struct gy_suite_desc *desc,
+                         const struct gy_hybrid_prekey_bundle *b);
+int gy_hybrid_bundle_parse(struct gy_hybrid_prekey_bundle *out,
+                           const struct gy_suite_desc *desc, const uint8_t *buf,
+                           size_t len);
+
+/*
+ * Hybrid one-time-prekey batch (section 4.1 keys): version || suite_id ||
+ * count_be16 || repeated hybrid public keys.  Same role as the classical
+ * gy_opk_batch_* but with hybrid keys.
+ */
+size_t gy_hybrid_opk_batch_wire_len(const struct gy_suite_desc *desc, size_t n);
+int gy_hybrid_opk_batch_put(uint8_t *out, size_t cap, size_t *outlen,
+                            const struct gy_suite_desc *desc,
+                            const struct gy_hybrid_public_key *keys, size_t n);
+int gy_hybrid_opk_batch_parse(struct gy_hybrid_public_key *out, size_t out_cap,
+                              size_t *n, const struct gy_suite_desc *desc,
+                              const uint8_t *buf, size_t len);
+
+/*
  * Identity fingerprint surface (D-X3DH-11): writes desc->hash_len bytes to out.
  * Display encoding is application scope.  Delegates to session/ (proto/ does no
  * crypto).  Returns GY_OK or a negative GY_ERR_*.
@@ -145,5 +176,30 @@ int gy_appkey_cert_parse(const struct gy_suite_desc *desc, const uint8_t *buf,
                          size_t len, struct gy_public_key *sak_pub,
                          uint64_t *issued_at, uint64_t *expiry,
                          uint32_t *identity_pkid, uint8_t *identity_sig);
+
+/*
+ * Hybrid (dual-scheme) SAK certificate framing.  The SAK public key is a curve
+ * key plus an ML-DSA key; the identity certifies it with an XEdDSA and an
+ * ML-DSA signature.  gy_appkey_verify checks both.  Buffers: sak_mldsa_pk holds
+ * desc->dsa_pk_len, identity_ed_sig desc->sig_len, identity_mldsa_sig
+ * desc->dsa_sig_len.  GY_ERR_STATE if desc is not hybrid.
+ */
+size_t gy_hybrid_appkey_cert_wire_len(const struct gy_suite_desc *desc);
+
+int gy_hybrid_appkey_cert_put(uint8_t *out, size_t cap, size_t *outlen,
+                              const struct gy_suite_desc *desc,
+                              const struct gy_public_key *sak_curve_pub,
+                              const uint8_t *sak_mldsa_pk, uint64_t issued_at,
+                              uint64_t expiry, uint32_t identity_pkid,
+                              const uint8_t *identity_ed_sig,
+                              const uint8_t *identity_mldsa_sig);
+
+int gy_hybrid_appkey_cert_parse(const struct gy_suite_desc *desc,
+                                const uint8_t *buf, size_t len,
+                                struct gy_public_key *sak_curve_pub,
+                                uint8_t *sak_mldsa_pk, uint64_t *issued_at,
+                                uint64_t *expiry, uint32_t *identity_pkid,
+                                uint8_t *identity_ed_sig,
+                                uint8_t *identity_mldsa_sig);
 
 #endif /* GY_ENVELOPE_H */

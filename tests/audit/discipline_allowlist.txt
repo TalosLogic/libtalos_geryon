@@ -11,3 +11,11 @@
 # 96-byte KDF_RK output) are the suite-INVARIANT key width, not a curve-
 # specific size, so they are outside the forbidden-pattern set and need no
 # entry here; see docs/decisions/double_ratchet.md for the 32-byte key width.
+#
+# GER-M5-10 widened the scan to session/ and proto/.  gy_devrec_key derives the
+# DeviceRecord STORE key (D-SES-12) as a fixed 64-byte, domain-separated SHA-512
+# of the (UserID, DeviceID) pair: a local hash-table lookup key, never on the
+# wire and independent of the crypto suite (the store does not know the suite),
+# so it is deliberately suite-INVARIANT SHA-512, not a descriptor hash
+# (GY_DEVKEY_LEN == 64 pins it).  Confirmed NOT a violation.
+src/session/session.c:561

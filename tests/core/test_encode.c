@@ -57,9 +57,9 @@ TEST(suite_lookup)
                     d->curve_type == GY_CURVE_TYPE_25519 &&
                     strcmp(d->name, "c25519") == 0,
                 "c25519 descriptor");
-    /* Only geryon_c25519 is enabled; every other byte is NULL. */
+    /* c25519 and h25519_512 are enabled; the 448-tier suites are not yet. */
     ASSERT_TRUE(gy_suite_desc(0x00) == NULL, "reserved 0x00 unknown");
-    ASSERT_TRUE(gy_suite_desc(GY_SUITE_H25519_512) == NULL, "0x02 not enabled");
+    ASSERT_TRUE(gy_suite_desc(GY_SUITE_H25519_512) != NULL, "0x02 enabled");
     ASSERT_TRUE(gy_suite_desc(GY_SUITE_C448) == NULL, "0x03 not enabled");
     ASSERT_TRUE(gy_suite_desc(GY_SUITE_H448_1024) == NULL, "0x04 not enabled");
     ASSERT_TRUE(gy_suite_desc(0x05) == NULL, "0x05 unknown");
@@ -155,9 +155,15 @@ TEST(info_kats)
     ASSERT_EQ(outlen, strlen("geryon.1.c25519.dr.aead"));
     ASSERT_MEMEQ(out, "geryon.1.c25519.dr.aead", outlen);
 
+    /* h25519_512 is enabled and carries its own suite name. */
+    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_H25519_512, "x3dh"),
+              GY_OK);
+    ASSERT_EQ(outlen, strlen("geryon.1.h25519_512.x3dh"));
+    ASSERT_MEMEQ(out, "geryon.1.h25519_512.x3dh", outlen);
+
     /* Unknown / not-yet-enabled suites, NULL args, and short cap reject. */
     ASSERT_EQ(gy_info(out, sizeof(out), &outlen, 0x00, "x3dh"), GY_ERR_ARG);
-    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_H25519_512, "x3dh"),
+    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_C448, "x3dh"),
               GY_ERR_ARG);
     ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_C25519, NULL),
               GY_ERR_ARG);

@@ -3,6 +3,56 @@
 Broad strokes per release. Architecture and rationale live in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+## [1.1.0] [2026-08-20]
+
+The hybrid flagship suite. Adds `geryon_h25519_512` (X25519 + ML-KEM-512,
+XEdDSA + ML-DSA-44), geryon's own PQ-hybrid design: session security holds if
+EITHER the ECDH or the KEM assumption survives. Every change is additive over
+v1.0.0; the frozen v1.0.0 ABI, wire format (`protocol_version` 0x01), and
+stored-blob formats are unchanged. A classical `geryon_c25519` identity and a
+hybrid `geryon_h25519_512` identity never interoperate: the suite is pinned per
+identity and there is no downgrade path. liboqs (ML-KEM-512, ML-DSA-44) joins
+libsodium as a runtime dependency.
+
+- **Hybrid key agreement and ratchet.** Hybrid X3DH mixes an ML-KEM
+  encapsulation into every classical DH (identity, signed prekey, one-time
+  prekey), and the Double Ratchet mixes a fresh ML-KEM secret into each ratchet
+  step's root KDF. Per-pair fusion is PQ-first (`HASH(kem_ss || dh_out)`); no
+  KEM secret is ever optional within the suite. Prekeys carry BOTH an XEdDSA and
+  an ML-DSA signature and verification requires both.
+
+- **Deniable PQ authentication.** The responder's first reply encapsulates to
+  the initiator's identity ML-KEM key; the initiator is PQ-pending
+  (classical-only authentication) until its first valid message after that
+  confirmation. `gy_pq_pending` now reports `GY_PQ_PENDING`/`GY_PQ_CONFIRMED`
+  for hybrid peers. No transcript signatures: offline deniability is preserved
+  in the hybrid suite exactly as in the classical one.
+
+- **Suite-agnostic public surface, hybrid throughout.** No public signature
+  changed. Every wire object self-describes via its suite byte, and each public
+  entry point dispatches internally. The custodian-less directory helpers
+  (`gy_bundle_assemble`, `gy_opk_batch_count`/`_get`,
+  `gy_registration_identity_pub`, `gy_bundle_fingerprint`), the SAK cluster
+  (`gy_custodian_sign`/`_generate_appkey`/`_rotate_appkey`/`_export_appkey_cert`
+  and `gy_appkey_verify`), prekey deletion, and one-time-prekey delete-on-use
+  all handle hybrid identities. The hybrid SAK is dual-scheme (XEdDSA + ML-DSA),
+  both-or-abort.
+
+- **Hybrid worked example.** The `examples/` driver runs the full lifecycle
+  under `geryon_h25519_512`, with the PQ-pending transition and ratchet KEM
+  refresh exercised alongside every phase the classical example covers.
+
+- **Security fix (low risk).** One-time-prekey delete-on-use now propagates the
+  sealed-idmat re-seal result instead of discarding it, so a receive whose OPK
+  consumption cannot be made durable fails closed. Previously a persist failure
+  was swallowed: the spent key was wiped in memory but remained in the last
+  sealed blob, so a crash and reopen could restore it and permit OPK reuse. The
+  in-memory wipe is unaffected. This corrects the classical delete-on-use path
+  present since v1.0.0 as well as its hybrid counterpart.
+
+The v1.1.0 materials (`docs/HYBRID_SPEC.md`, the formal models, the hybrid
+decision registers) are published with this release.
+
 ## [1.0.0] [2026-08-16]
 
 Initial release: a clean-room C17 implementation of the classical Signal

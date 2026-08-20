@@ -357,3 +357,45 @@ cross-referenced D-GEN/D-X3DH/D-DR IDs live in sibling files.
   UserID field at full capacity; and the example gives its
   two clients distinct DeviceIDs and asserts the steady-state
   GY_FANOUT_MESSAGE path.
+
+### D-SES-13: Base-key dedupe (index on PKID pair, confirm on full key)
+
+- **Spec gap:** HYBRID_SPEC section 6.8 requires base-key dedupe -
+  an incoming initial message whose `(IK_A, EK_A)` matches any
+  existing session record (active OR archived) MUST route to that
+  session, not create a new one - but does not fix the lookup
+  mechanism, and section 3.3 forbids making any security decision on
+  a PKID alone (they are grindable at 2^32 and are lookup handles,
+  not security values).
+- **Decision:** two-tier match, in the session-create path (Layer 4),
+  not in kex/. (1) INDEX every session record by the 8-byte pair
+  `(IK_A.pkid || EK_A.pkid)` for an O(1) probe against active and
+  archived records. (2) On a PKID-pair hit, CONFIRM with a
+  constant-time full-key comparison (the incoming IK_A identity
+  encoding curve_type || curve_pk || mlkem_ek || mldsa_pk, and the
+  EK_A curve_pk) against the stored record before treating it as the
+  same session; only a full match dedupes, a PKID collision with
+  different keys falls through to "new session". NEVER decide on the
+  PKID pair alone (section 3.3). The kex layer (gy_hybrid_x3dh_respond)
+  already surfaces the parsed IK_A and EK_A the session layer needs.
+- **Rationale:** PKIDs are exactly the right cheap INDEX; the
+  confirm step is what section 3.3 mandates on a PKID match. Its role
+  is CORRECTNESS and hygiene, not anti-hijack: (a) it prevents an
+  accidental 32-bit EK_A PKID collision between two legitimate
+  sessions from wrongly routing/dropping a genuine new session; (b) it
+  keeps a grindable value from silently becoming load-bearing in a
+  later refactor. It is not defending against a session-takeover: the
+  real threat, a network attacker REPLAYING a verbatim initial
+  message, involves no grinding (the replay carries the honest party's
+  exact IK_A/EK_A, so the index hits and the full-key compare trivially
+  matches, routing to the existing session where the consumed
+  first-message key is already deleted, section 7.4). A mis-hit from a
+  crafted key just fails to decrypt, because completing the X3DH as
+  IK_A needs IK_A's private key (DH1 = ECDH(IK_A.curve_sk, SPK_B)),
+  which an attacker copying a public IK_A does not hold.
+- **Validation:** a replayed initial message creates no new session
+  and its first message is undecryptable; a fresh-EK_A re-initiation
+  is accepted while sessions exist (Sesame racing/device-add flows are
+  not blocked - dedupe is on the pair, never on IK_A alone); a crafted
+  record whose stored PKID pair matches but whose full keys differ is
+  NOT deduped (falls through to new session).

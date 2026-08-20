@@ -7,6 +7,21 @@
 #define GY_ERROR_H
 
 /*
+ * Production safety interlock.  GY_TEST_HOOKS gates every test-only seam
+ * (the ML-KEM/ML-DSA _derand entry points, the ratchet keypair/KEM/salt
+ * substitution pointers, and the operation counters).  It must NEVER be
+ * defined when compiling a production library object: the geryon_* library
+ * targets are compiled with GY_PRODUCTION_BUILD, and this header - included
+ * transitively by every core translation unit - hard-fails the build if the
+ * two ever coexist.  Test targets recompile the sources WITHOUT
+ * GY_PRODUCTION_BUILD, so the hooks remain available to them alone and no
+ * test-only symbol can enter the shipped library.
+ */
+#if defined(GY_TEST_HOOKS) && defined(GY_PRODUCTION_BUILD)
+#error "GY_TEST_HOOKS must not be enabled in a production library build"
+#endif
+
+/*
  * Library-wide return codes.  Every geryon function returns int: GY_OK (0)
  * on success, a negative GY_ERR_* on failure.  A return value is never
  * silently ignored by callers.

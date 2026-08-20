@@ -4,3 +4,6 @@
 [submodule "third_party/libsodium"]
 	path = third_party/libsodium
 	url = https://github.com/jedisct1/libsodium.git
+[submodule "third_party/liboqs"]
+	path = third_party/liboqs
+	url = https://github.com/open-quantum-safe/liboqs.git

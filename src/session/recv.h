@@ -102,4 +102,30 @@ int gy_recv(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
             const uint8_t *device_id, size_t device_id_len, const uint8_t *msg,
             size_t msg_len, uint8_t *out, size_t *out_len);
 
+/* ------------------------------------------------------------------------- *
+ * Hybrid receive (HYBRID_SPEC section 6).  No separate context type: a hybrid
+ * responder reuses the classical gy_recv_ctx (initialize it with NULL
+ * local_ik/spks - the hybrid responder material is passed per-call), so the
+ * transaction handling and the steady-state DR path (which dispatches on the
+ * session's suite) are shared.  Only an initiation needs the hybrid material.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * Receive one enveloped message on a hybrid identity.  c is a gy_recv_ctx pinned
+ * to the hybrid suite; local_hik is the responder hybrid identity; hspks[0..
+ * n_hspks) is the current hybrid signed prekey plus retained history
+ * (n_hspks >= 1); hopks may be NULL with n_hopks 0.  Initiations run the hybrid
+ * handshake (full-identity conditional update, hybrid X3DH, KEM confirmation
+ * state); Double Ratchet messages reuse the shared association path.  Same
+ * contract and return values as gy_recv.
+ */
+int gy_hybrid_recv(struct gy_recv_ctx *c,
+                   const struct gy_hybrid_identity_keypair *local_hik,
+                   const struct gy_hybrid_signed_prekey *hspks, size_t n_hspks,
+                   const struct gy_hybrid_keypair *hopks, size_t n_hopks,
+                   const uint8_t *user_id, size_t user_id_len,
+                   const uint8_t *device_id, size_t device_id_len,
+                   const uint8_t *msg, size_t msg_len, uint8_t *out,
+                   size_t *out_len);
+
 #endif /* GY_RECV_H */

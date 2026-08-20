@@ -1,0 +1,38 @@
+(* formal/models/smoke.pv
+ *
+ * Toolchain smoke test. Self-contained: it deliberately does
+ * NOT `-lib formal/lib/geryon.pvl`, because the shared symbolic theory
+ * lives there. Its only job is to prove that the pinned
+ * ProVerif 2.04 runs and that scripts/formal_check.sh parses a RESULT
+ * line correctly in both the "proved" and (via the gate-direction
+ * self-check) "attack" directions.
+ *
+ * The runner passes `-lib formal/lib/geryon.pvl` to every
+ * model, so this file is loaded alongside the shared theory. It stays
+ * self-contained and lib-agnostic: it uses none of the library and
+ * declares its own channel `c` (not `pub`) so there is no clash with the
+ * library's `free pub`.
+ *
+ * HYBRID_SPEC sections modeled: none (no protocol content).
+ * Register decisions consumed: D-FM-7 (toolchain pin only).
+ * Queries and expected verdicts:
+ *   - secrecy of s: proved  (RESULT not attacker(s[]) is true.)
+ * Expected runtime on the CI runner class: < 1 s (budget 5 s).
+ *)
+
+free c: channel.
+
+type key.
+fun senc(bitstring, key): bitstring.
+reduc forall m: bitstring, k: key; sdec(senc(m, k), k) = m.
+
+free k: key [private].
+free s: bitstring [private].
+
+(* s is only ever sent encrypted under the never-revealed key k, so
+ * secrecy must hold. A vacuous-model typo (e.g. leaking s directly)
+ * would flip this to "is false" and fail the recorded verdict. *)
+query attacker(s).
+
+process
+    out(c, senc(s, k))

@@ -187,7 +187,7 @@ cust_persist_header(struct gy_custodian *c, const uint8_t *tail,
     size_t hdrlen;
     int rc;
 
-    if (tail_len > GY_CUST_IDMAT_SEALED_MAX)
+    if (tail_len > GY_CUST_HYBRID_IDMAT_SEALED_MAX)
         return GY_ERR_ARG;
 
     buf = calloc(1, GY_CUST_BLOB_MAX);
@@ -225,6 +225,26 @@ cust_persist_header(struct gy_custodian *c, const uint8_t *tail,
  * 0x03), since this is a separate direct gy_keystore_seal/unseal call, not
  * routed through gy_sealed_store_bind. */
 static const uint8_t IDMAT_AD[1] = {0x10};
+/* Distinct AD for the hybrid sealed idmat (a different struct shape). */
+static const uint8_t IDMAT_HYBRID_AD[1] = {0x11};
+
+/*
+ * Guarded-allocation size for a custodian of the given suite: a hybrid suite
+ * gets the composed gy_hybrid_custodian (base + hybrid material).  Used for both
+ * the allocation and every gy_wipe of the whole object, so hybrid key bytes are
+ * always zeroized on teardown.
+ */
+#define CUST_SIZE(desc)                                                        \
+    (((desc) != NULL && (desc)->is_hybrid)                                     \
+         ? sizeof(struct gy_hybrid_custodian)                                  \
+         : sizeof(struct gy_custodian))
+
+/* Upcast a base custodian to its outer hybrid struct (valid iff hybrid). */
+static struct gy_hybrid_custodian *
+cust_as_hybrid(struct gy_custodian *c)
+{
+    return (struct gy_hybrid_custodian *)c;
+}
 
 /* Rebuild c->spk_kps[0..n_spks) from c->spks[0..n_spks): the dense
  * gy_keypair view gy_recv_ctx_init actually takes (see custodian.h). */
@@ -289,6 +309,55 @@ cust_seal_and_persist_idmat(struct gy_custodian *c)
     sealed_len = GY_CUST_IDMAT_SEALED_MAX;
     rc = gy_keystore_seal(&c->ks, GY_CUSTODIAN_WRAP_ALG, IDMAT_AD,
                           sizeof(IDMAT_AD), (const uint8_t *)idmat,
+                          sizeof(*idmat), sealed, &sealed_len);
+    gy_guarded_free(idmat);
+    if (rc != GY_OK) {
+        free(sealed);
+        return rc;
+    }
+
+    rc = cust_persist_header(c, sealed, sealed_len);
+    free(sealed);
+    return rc;
+}
+
+/* Seal the CURRENT hybrid ik/hspks/hopks/hsaks and persist. */
+static int
+cust_seal_and_persist_hybrid_idmat(struct gy_custodian *c)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_cust_hybrid_idmat *idmat;
+    uint8_t *sealed;
+    size_t sealed_len, i;
+    int rc;
+
+    idmat = gy_guarded_alloc(sizeof(*idmat));
+    if (idmat == NULL)
+        return GY_ERR_CRYPTO;
+    memset(idmat, 0, sizeof(*idmat));
+
+    idmat->ik = hc->hik;
+    for (i = 0; i < hc->n_hspks; i++)
+        idmat->spks[i] = hc->hspks[i];
+    idmat->n_spks = (uint64_t)hc->n_hspks;
+    for (i = 0; i < hc->n_hopks; i++) {
+        idmat->opks[i] = hc->hopks[i];
+        idmat->opk_used[i] = (uint8_t)hc->hopk_used[i];
+        idmat->opk_consumed[i] = (uint8_t)hc->hopk_consumed[i];
+    }
+    idmat->n_opks = (uint64_t)hc->n_hopks;
+    for (i = 0; i < hc->n_hsaks; i++)
+        idmat->saks[i] = hc->hsaks[i];
+    idmat->n_saks = (uint64_t)hc->n_hsaks;
+
+    sealed = calloc(1, GY_CUST_HYBRID_IDMAT_SEALED_MAX);
+    if (sealed == NULL) {
+        gy_guarded_free(idmat);
+        return GY_ERR_CRYPTO;
+    }
+    sealed_len = GY_CUST_HYBRID_IDMAT_SEALED_MAX;
+    rc = gy_keystore_seal(&c->ks, GY_CUSTODIAN_WRAP_ALG, IDMAT_HYBRID_AD,
+                          sizeof(IDMAT_HYBRID_AD), (const uint8_t *)idmat,
                           sizeof(*idmat), sealed, &sealed_len);
     gy_guarded_free(idmat);
     if (rc != GY_OK) {
@@ -417,6 +486,93 @@ cust_load_idmat(struct gy_custodian *c, const uint8_t *sealed,
     return GY_OK;
 }
 
+/*
+ * Wire the (classical) send/receive contexts for a hybrid custodian: NULL
+ * classical identity/SPKs (the hybrid material is passed per-call to
+ * gy_send_initiate_hybrid / gy_hybrid_recv), but the same op arenas, store,
+ * expiry, and self ids.  Steady-state encrypt/recv dispatch on the session
+ * suite, so these contexts serve hybrid sessions unchanged.
+ */
+static int
+cust_wire_hybrid_ctxs(struct gy_custodian *c)
+{
+    uint8_t aead = gy_default_aead(c->desc);
+    int rc;
+
+    rc = gy_send_ctx_init(&c->send, &c->store, c->desc, NULL, aead, &c->expiry,
+                          c->self_uid, c->self_uid_len, c->self_did,
+                          c->self_did_len);
+    if (rc != GY_OK)
+        return rc;
+    return gy_recv_ctx_init(&c->recv, &c->store, c->desc, NULL, NULL, 0, NULL,
+                            0, aead, &c->expiry, c->clock, c->clock_ctx);
+}
+
+/* Unseal hybrid sealed idmat into hc->hik/hspks/hopks/hsaks, register slots,
+ * and wire the contexts.  Mirror of cust_load_idmat for hybrid suites. */
+static int
+cust_load_hybrid_idmat(struct gy_custodian *c, const uint8_t *sealed,
+                       size_t sealed_len)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_cust_hybrid_idmat *idmat;
+    size_t ptlen, i;
+    int rc;
+
+    idmat = gy_guarded_alloc(sizeof(*idmat));
+    if (idmat == NULL)
+        return GY_ERR_CRYPTO;
+
+    ptlen = sizeof(*idmat);
+    rc = gy_keystore_unseal(&c->ks, IDMAT_HYBRID_AD, sizeof(IDMAT_HYBRID_AD),
+                            sealed, sealed_len, (uint8_t *)idmat, &ptlen);
+    if (rc != GY_OK) {
+        gy_guarded_free(idmat);
+        return rc;
+    }
+    if (ptlen != sizeof(*idmat)) {
+        gy_guarded_free(idmat);
+        return GY_ERR_VERIFY;
+    }
+    if (idmat->n_spks > GY_CUSTODIAN_SPK_HISTORY_MAX ||
+        idmat->n_opks > GY_OPK_BATCH_MAX ||
+        idmat->n_saks > GY_CUSTODIAN_SAK_HISTORY_MAX) {
+        gy_guarded_free(idmat);
+        return GY_ERR_VERIFY;
+    }
+
+    hc->hik = idmat->ik;
+    hc->n_hspks = (size_t)idmat->n_spks;
+    for (i = 0; i < hc->n_hspks; i++)
+        hc->hspks[i] = idmat->spks[i];
+    hc->n_hopks = (size_t)idmat->n_opks;
+    for (i = 0; i < hc->n_hopks; i++) {
+        hc->hopks[i] = idmat->opks[i];
+        hc->hopk_used[i] = idmat->opk_used[i];
+        hc->hopk_consumed[i] = idmat->opk_consumed[i];
+    }
+    hc->n_hsaks = (size_t)idmat->n_saks;
+    for (i = 0; i < hc->n_hsaks; i++)
+        hc->hsaks[i] = idmat->saks[i];
+    gy_guarded_free(idmat);
+
+    for (i = 0; i < hc->n_hspks; i++)
+        (void)cust_slot_register(c, GY_SLOT_SPK,
+                                 hc->hspks[i].kp.pub.curve.pkid);
+    for (i = 0; i < hc->n_hopks; i++)
+        if (hc->hopk_used[i])
+            (void)cust_slot_register(c, GY_SLOT_OPK,
+                                     hc->hopks[i].pub.curve.pkid);
+    for (i = 0; i < hc->n_hsaks; i++)
+        (void)cust_slot_register(c, GY_SLOT_SAK, hc->hsaks[i].kp.pub.pkid);
+
+    rc = cust_wire_hybrid_ctxs(c);
+    if (rc != GY_OK)
+        return rc;
+    c->have_identity = 1;
+    return GY_OK;
+}
+
 /* ---- internal store trampolines (int-kind sealed_store <-> enum-kind
  * session/ gy_store); every record/prekey/session blob. ----- */
 
@@ -506,10 +662,36 @@ tr_consume_opk(void *raw, uint32_t pkid)
      * We must NOT cust_reinit_recv here (it would rebuild the very recv
      * context currently on the stack); the slot stays free for the next
      * reinit.  The idmat re-seal makes the deletion durable so a reopen never
-     * restores the spent key; a rare persist failure still leaves the key
-     * gone in memory (reuse blocked for this session) and is reconciled on
-     * the next idmat write.
+     * restores the spent key.  Its return code is PROPAGATED, not swallowed:
+     * a persist failure leaves the key gone in memory (reuse blocked for this
+     * session) but still present in the last-sealed idmat, so a reopen could
+     * restore the spent private key.  Returning the failure makes the receive
+     * path (gy_op_consume_opk -> recv_init) fail closed rather than complete a
+     * receive whose OPK consumption is not durable.
+     *
+     * A hybrid custodian holds its OPK pool in hc->hopks (the classical
+     * c->opks is empty), and the hybrid receive path reads hc->hopks live per
+     * call, so the same delete-on-use applies there against the hybrid pool,
+     * resealing the hybrid idmat.
      */
+    if (c->desc->is_hybrid) {
+        struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+
+        for (i = 0; i < hc->n_hopks; i++) {
+            if (hc->hopk_used[i] && hc->hopks[i].pub.curve.pkid == pkid) {
+                gy_key_handle h = cust_slot_find(c, GY_SLOT_OPK, pkid);
+
+                if (h != GY_KEY_HANDLE_INVALID)
+                    gy_custodian_slot_free(c, h);
+                gy_wipe(&hc->hopks[i], sizeof(hc->hopks[i]));
+                hc->hopk_used[i] = 0;
+                hc->hopk_consumed[i] = 0;
+                return cust_seal_and_persist_hybrid_idmat(c);
+            }
+        }
+        return GY_OK;
+    }
+
     for (i = 0; i < c->n_opks; i++) {
         if (c->opk_used[i] && c->opks[i].pub.pkid == pkid) {
             gy_key_handle h = cust_slot_find(c, GY_SLOT_OPK, pkid);
@@ -519,8 +701,7 @@ tr_consume_opk(void *raw, uint32_t pkid)
             gy_wipe(&c->opks[i], sizeof(c->opks[i]));
             c->opk_used[i] = 0;
             c->opk_consumed[i] = 0;
-            (void)cust_seal_and_persist_idmat(c);
-            break;
+            return cust_seal_and_persist_idmat(c);
         }
     }
     return GY_OK;
@@ -642,10 +823,10 @@ gy_custodian_create(struct gy_custodian **out, uint8_t suite_id,
      * plus the embedded send/recv ratchet state directly, so the object
      * itself - not just the KEK - must live in guarded (sodium_malloc)
      * memory per CUSTODY_SPEC section 15. */
-    c = gy_guarded_alloc(sizeof(*c));
+    c = gy_guarded_alloc(CUST_SIZE(desc));
     if (c == NULL)
         return GY_ERR_CRYPTO;
-    memset(c, 0, sizeof(*c));
+    memset(c, 0, CUST_SIZE(desc));
 
     c->desc = desc;
     c->suite_id = suite_id;
@@ -662,7 +843,7 @@ gy_custodian_create(struct gy_custodian **out, uint8_t suite_id,
         rc = gy_expiry_cfg_init(&c->expiry, cfg->max_send, cfg->max_recv,
                                 cfg->max_latency);
         if (rc != GY_OK) {
-            gy_wipe(c, sizeof(*c));
+            gy_wipe(c, CUST_SIZE(c->desc));
             gy_guarded_free(c);
             return rc;
         }
@@ -673,7 +854,7 @@ gy_custodian_create(struct gy_custodian **out, uint8_t suite_id,
                             GY_CUSTODIAN_OPSLIMIT, GY_CUSTODIAN_MEMLIMIT, cred,
                             cred_len, c->wrap, &c->wrap_len);
     if (rc != GY_OK) {
-        gy_wipe(c, sizeof(*c));
+        gy_wipe(c, CUST_SIZE(c->desc));
         gy_guarded_free(c);
         return rc;
     }
@@ -681,7 +862,7 @@ gy_custodian_create(struct gy_custodian **out, uint8_t suite_id,
     rc = cust_persist_header(c, NULL, 0);
     if (rc != GY_OK) {
         gy_keystore_close(&c->ks);
-        gy_wipe(c, sizeof(*c));
+        gy_wipe(c, CUST_SIZE(c->desc));
         gy_guarded_free(c);
         return rc;
     }
@@ -690,7 +871,7 @@ gy_custodian_create(struct gy_custodian **out, uint8_t suite_id,
                               &c->sealed_store);
     if (rc != GY_OK) {
         gy_keystore_close(&c->ks);
-        gy_wipe(c, sizeof(*c));
+        gy_wipe(c, CUST_SIZE(c->desc));
         gy_guarded_free(c);
         return rc;
     }
@@ -717,59 +898,51 @@ gy_custodian_open(struct gy_custodian **out, const gy_store_callbacks *store,
     if (gy_runtime_init() != GY_OK)
         return GY_ERR_CRYPTO;
 
-    /* Guarded allocation, matching gy_custodian_create (CUSTODY_SPEC
-     * section 15: the object embeds every unlocked key directly). */
-    c = gy_guarded_alloc(sizeof(*c));
-    if (c == NULL)
-        return GY_ERR_CRYPTO;
-    memset(c, 0, sizeof(*c));
-
+    /*
+     * Load and decode the bootstrap header BEFORE allocating the object: the
+     * header names the suite, which determines whether this is a classical or
+     * (larger) hybrid custodian, and hence CUST_SIZE.  No custodian exists yet,
+     * so the load runs without a re-entrancy guard.
+     */
     buf = calloc(1, GY_CUST_BLOB_MAX);
-    if (buf == NULL) {
-        gy_wipe(c, sizeof(*c));
-        gy_guarded_free(c);
+    if (buf == NULL)
         return GY_ERR_CRYPTO;
-    }
 
     loaded_len = GY_CUST_BLOB_MAX;
-    CUST_CB_BEGIN(c);
     rc = store->load_identity(store->ctx, buf, loaded_len, &loaded_len);
-    CUST_CB_END(c);
     if (rc != GY_OK) {
         free(buf);
-        gy_wipe(c, sizeof(*c));
-        gy_guarded_free(c);
         return rc;
     }
     if (loaded_len == 0) {
-        /* absent: no custodian has ever been created in this store */
-        free(buf);
-        gy_wipe(c, sizeof(*c));
-        gy_guarded_free(c);
+        free(buf); /* absent: no custodian has ever been created */
         return GY_ERR_STATE;
     }
-
     rc = gy_cust_header_decode(buf, loaded_len, &hdr, &consumed);
     if (rc != GY_OK) {
-        /* malformed header bytes: a structural failure ahead of any
-         * credential check, distinct from the uniform unlock error below */
         gy_wipe(&hdr, sizeof(hdr));
         gy_wipe(buf, GY_CUST_BLOB_MAX);
         free(buf);
-        gy_wipe(c, sizeof(*c));
-        gy_guarded_free(c);
         return rc;
     }
-
     desc = gy_suite_lookup(hdr.suite_id);
     if (desc == NULL) {
         gy_wipe(&hdr, sizeof(hdr));
         gy_wipe(buf, GY_CUST_BLOB_MAX);
         free(buf);
-        gy_wipe(c, sizeof(*c));
-        gy_guarded_free(c);
         return GY_ERR_ARG;
     }
+
+    /* Guarded allocation sized to the suite (CUSTODY_SPEC section 15: the object
+     * embeds every unlocked key directly). */
+    c = gy_guarded_alloc(CUST_SIZE(desc));
+    if (c == NULL) {
+        gy_wipe(&hdr, sizeof(hdr));
+        gy_wipe(buf, GY_CUST_BLOB_MAX);
+        free(buf);
+        return GY_ERR_CRYPTO;
+    }
+    memset(c, 0, CUST_SIZE(desc));
 
     c->desc = desc;
     c->suite_id = hdr.suite_id;
@@ -786,7 +959,7 @@ gy_custodian_open(struct gy_custodian **out, const gy_store_callbacks *store,
         gy_wipe(&hdr, sizeof(hdr));
         gy_wipe(buf, GY_CUST_BLOB_MAX);
         free(buf);
-        gy_wipe(c, sizeof(*c));
+        gy_wipe(c, CUST_SIZE(c->desc));
         gy_guarded_free(c);
         return rc;
     }
@@ -800,7 +973,7 @@ gy_custodian_open(struct gy_custodian **out, const gy_store_callbacks *store,
         gy_keystore_close(&c->ks);
         gy_wipe(buf, GY_CUST_BLOB_MAX);
         free(buf);
-        gy_wipe(c, sizeof(*c));
+        gy_wipe(c, CUST_SIZE(c->desc));
         gy_guarded_free(c);
         return rc;
     }
@@ -808,12 +981,14 @@ gy_custodian_open(struct gy_custodian **out, const gy_store_callbacks *store,
 
     tail_len = loaded_len - consumed;
     if (tail_len > 0) {
-        rc = cust_load_idmat(c, buf + consumed, tail_len);
+        rc = c->desc->is_hybrid
+                 ? cust_load_hybrid_idmat(c, buf + consumed, tail_len)
+                 : cust_load_idmat(c, buf + consumed, tail_len);
         if (rc != GY_OK) {
             gy_keystore_close(&c->ks);
             gy_wipe(buf, GY_CUST_BLOB_MAX);
             free(buf);
-            gy_wipe(c, sizeof(*c));
+            gy_wipe(c, CUST_SIZE(c->desc));
             gy_guarded_free(c);
             return rc;
         }
@@ -832,7 +1007,7 @@ gy_custodian_close(struct gy_custodian *c)
     if (c == NULL)
         return;
     gy_keystore_close(&c->ks);
-    gy_wipe(c, sizeof(*c));
+    gy_wipe(c, CUST_SIZE(c->desc));
     gy_guarded_free(c);
 }
 
@@ -860,7 +1035,7 @@ gy_custodian_reset(struct gy_custodian *c)
     rc = store.store_identity(store.ctx, NULL, 0);
     CUST_CB_END(c);
 
-    gy_wipe(c, sizeof(*c));
+    gy_wipe(c, CUST_SIZE(c->desc));
     gy_guarded_free(c);
     return rc;
 }
@@ -926,6 +1101,73 @@ gy_custodian_change_credential(struct gy_custodian *c, const uint8_t *new_cred,
     return rc;
 }
 
+/*
+ * Default hybrid SPK advertisement (section 5.3): ML-KEM refresh interval
+ * [1,100], ChaCha20-Poly1305 (bit 32) offered.  Well-formed per
+ * gy_hybrid_flags_validate.
+ */
+#define CUST_HYBRID_SPK_FLAGS                                                  \
+    (UINT64_C(1) | (UINT64_C(100) << 16) | (UINT64_C(1) << 32))
+
+/* Hybrid identity generation (section 4/5): hybrid ik + SPK + OPK batch, sealed
+ * as the hybrid idmat, contexts wired over the base with no classical id. */
+static int
+cust_gen_hybrid_identity(struct gy_custodian *c, uint64_t spk_timestamp,
+                         size_t n_opks)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    size_t i;
+    int rc;
+
+    rc = gy_hybrid_identity_generate(c->desc, &hc->hik);
+    if (rc != GY_OK)
+        return rc;
+    rc = gy_hybrid_signed_prekey_generate(c->desc, &hc->hspks[0], &hc->hik,
+                                          spk_timestamp, CUST_HYBRID_SPK_FLAGS);
+    if (rc != GY_OK) {
+        gy_wipe(&hc->hik, sizeof(hc->hik));
+        return rc;
+    }
+    hc->n_hspks = 1;
+
+    if (n_opks > 0) {
+        rc = gy_hybrid_opk_generate(c->desc, hc->hopks, n_opks, NULL, 0);
+        if (rc != GY_OK) {
+            gy_wipe(&hc->hik, sizeof(hc->hik));
+            gy_wipe(hc->hspks, sizeof(hc->hspks[0]));
+            hc->n_hspks = 0;
+            return rc;
+        }
+    }
+    for (i = 0; i < n_opks; i++) {
+        hc->hopk_used[i] = 1;
+        hc->hopk_consumed[i] = 0;
+    }
+    hc->n_hopks = n_opks;
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        gy_wipe(&hc->hik, sizeof(hc->hik));
+        gy_wipe(hc->hspks, sizeof(hc->hspks));
+        hc->n_hspks = 0;
+        gy_wipe(hc->hopks, sizeof(hc->hopks));
+        memset(hc->hopk_used, 0, sizeof(hc->hopk_used));
+        memset(hc->hopk_consumed, 0, sizeof(hc->hopk_consumed));
+        hc->n_hopks = 0;
+        return rc;
+    }
+
+    (void)cust_slot_register(c, GY_SLOT_SPK, hc->hspks[0].kp.pub.curve.pkid);
+    for (i = 0; i < n_opks; i++)
+        (void)cust_slot_register(c, GY_SLOT_OPK, hc->hopks[i].pub.curve.pkid);
+
+    rc = cust_wire_hybrid_ctxs(c);
+    if (rc != GY_OK)
+        return rc;
+    c->have_identity = 1;
+    return GY_OK;
+}
+
 int
 gy_custodian_generate_identity(struct gy_custodian *c, uint64_t spk_timestamp,
                                size_t n_opks)
@@ -942,6 +1184,9 @@ gy_custodian_generate_identity(struct gy_custodian *c, uint64_t spk_timestamp,
         return GY_ERR_STATE;
     if (n_opks > GY_OPK_BATCH_MAX)
         return GY_ERR_ARG;
+
+    if (c->desc->is_hybrid)
+        return cust_gen_hybrid_identity(c, spk_timestamp, n_opks);
 
     rc = gy_identity_generate(c->desc, &c->ik);
     if (rc != GY_OK)
@@ -1004,6 +1249,56 @@ gy_custodian_generate_identity(struct gy_custodian *c, uint64_t spk_timestamp,
     return GY_OK;
 }
 
+/*
+ * Hybrid SPK rotation: generate a fresh hybrid signed prekey, push it to the
+ * front of hc->hspks (evicting/zeroizing the oldest at capacity), reseal.  No
+ * recv rewire: the hybrid receive path reads hc->hspks directly per-call.
+ */
+static int
+cust_rotate_hybrid_spk(struct gy_custodian *c, uint64_t spk_timestamp)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_hybrid_signed_prekey newspk;
+    struct gy_hybrid_signed_prekey backup[GY_CUSTODIAN_SPK_HISTORY_MAX];
+    size_t backup_n, i;
+    gy_key_handle evict_h = GY_KEY_HANDLE_INVALID;
+    int rc;
+
+    rc = gy_hybrid_signed_prekey_generate(c->desc, &newspk, &hc->hik,
+                                          spk_timestamp, CUST_HYBRID_SPK_FLAGS);
+    if (rc != GY_OK)
+        return rc;
+
+    backup_n = hc->n_hspks;
+    memcpy(backup, hc->hspks, sizeof(hc->hspks));
+    if (hc->n_hspks == GY_CUSTODIAN_SPK_HISTORY_MAX) {
+        size_t tail = GY_CUSTODIAN_SPK_HISTORY_MAX - 1;
+
+        evict_h =
+            cust_slot_find(c, GY_SLOT_SPK, hc->hspks[tail].kp.pub.curve.pkid);
+        hc->n_hspks--;
+    }
+    for (i = hc->n_hspks; i > 0; i--)
+        hc->hspks[i] = hc->hspks[i - 1];
+    hc->hspks[0] = newspk;
+    gy_wipe(&newspk, sizeof(newspk));
+    hc->n_hspks++;
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        memcpy(hc->hspks, backup, sizeof(hc->hspks));
+        hc->n_hspks = backup_n;
+        gy_wipe(backup, sizeof(backup));
+        return rc;
+    }
+    gy_wipe(backup, sizeof(backup));
+
+    if (evict_h != GY_KEY_HANDLE_INVALID)
+        gy_custodian_slot_free(c, evict_h);
+    (void)cust_slot_register(c, GY_SLOT_SPK, hc->hspks[0].kp.pub.curve.pkid);
+    return GY_OK;
+}
+
 int
 gy_custodian_rotate_signed_prekey(struct gy_custodian *c,
                                   uint64_t spk_timestamp)
@@ -1021,6 +1316,9 @@ gy_custodian_rotate_signed_prekey(struct gy_custodian *c,
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+
+    if (c->desc->is_hybrid)
+        return cust_rotate_hybrid_spk(c, spk_timestamp);
 
     rc = gy_signed_prekey_generate(c->desc, &newspk, c->ik.sk, spk_timestamp);
     if (rc != GY_OK)
@@ -1156,6 +1454,82 @@ cust_replenish_opks(struct gy_custodian *c, size_t count)
     return cust_reinit_recv(c);
 }
 
+/*
+ * Hybrid OPK replenishment core (no CUST_ENTER; caller holds the custodian):
+ * generate `count` hybrid one-time prekeys into free hopk slots, reseal.  Shared
+ * by generate_onetime_prekeys and (b-iii-2b) the hybrid one-shot bundle path.
+ */
+static int
+cust_replenish_hybrid_opks(struct gy_custodian *c, size_t count)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    uint32_t existing[GY_OPK_BATCH_MAX];
+    size_t touched[GY_OPK_BATCH_MAX];
+    size_t n_existing, free_slots, n_touched, saved_n, i, slot;
+    struct gy_hybrid_keypair *gen;
+    int rc;
+
+    if (count == 0 || count > GY_OPK_BATCH_MAX)
+        return GY_ERR_ARG;
+
+    n_existing = 0;
+    free_slots = 0;
+    for (i = 0; i < GY_OPK_BATCH_MAX; i++) {
+        if (i < hc->n_hopks && hc->hopk_used[i])
+            existing[n_existing++] = hc->hopks[i].pub.curve.pkid;
+        else
+            free_slots++;
+    }
+    if (count > free_slots)
+        return GY_ERR_NO_SPACE;
+
+    gen = gy_guarded_alloc(count * sizeof(*gen));
+    if (gen == NULL)
+        return GY_ERR_CRYPTO;
+    rc = gy_hybrid_opk_generate(c->desc, gen, count, existing, n_existing);
+    if (rc != GY_OK) {
+        gy_guarded_free(gen);
+        return rc;
+    }
+
+    saved_n = hc->n_hopks;
+    slot = 0;
+    n_touched = 0;
+    for (i = 0; i < count; i++) {
+        while (slot < GY_OPK_BATCH_MAX &&
+               (slot < hc->n_hopks && hc->hopk_used[slot]))
+            slot++;
+        hc->hopks[slot] = gen[i];
+        hc->hopk_used[slot] = 1;
+        hc->hopk_consumed[slot] = 0;
+        if (slot + 1 > hc->n_hopks)
+            hc->n_hopks = slot + 1;
+        (void)cust_slot_register(c, GY_SLOT_OPK,
+                                 hc->hopks[slot].pub.curve.pkid);
+        touched[n_touched++] = slot;
+        slot++;
+    }
+    gy_guarded_free(gen);
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        gy_key_handle h;
+
+        for (i = 0; i < n_touched; i++) {
+            slot = touched[i];
+            h = cust_slot_find(c, GY_SLOT_OPK, hc->hopks[slot].pub.curve.pkid);
+            if (h != GY_KEY_HANDLE_INVALID)
+                gy_custodian_slot_free(c, h);
+            gy_wipe(&hc->hopks[slot], sizeof(hc->hopks[slot]));
+            hc->hopk_used[slot] = 0;
+            hc->hopk_consumed[slot] = 0;
+        }
+        hc->n_hopks = saved_n;
+        return rc;
+    }
+    return GY_OK;
+}
+
 int
 gy_custodian_generate_onetime_prekeys(struct gy_custodian *c, size_t count)
 {
@@ -1166,6 +1540,8 @@ gy_custodian_generate_onetime_prekeys(struct gy_custodian *c, size_t count)
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+    if (c->desc->is_hybrid)
+        return cust_replenish_hybrid_opks(c, count);
     return cust_replenish_opks(c, count);
 }
 
@@ -1179,6 +1555,116 @@ cust_first_reservable_opk(const struct gy_custodian *c)
         if (c->opk_used[i] && !c->opk_consumed[i])
             return i;
     return (size_t)-1;
+}
+
+/* ---- hybrid publish (section 5.4/5.5) ---------------------------------- */
+
+static size_t
+cust_first_reservable_hybrid_opk(const struct gy_hybrid_custodian *hc)
+{
+    size_t i;
+
+    for (i = 0; i < hc->n_hopks; i++)
+        if (hc->hopk_used[i] && !hc->hopk_consumed[i])
+            return i;
+    return (size_t)-1;
+}
+
+/* Assemble a published hybrid bundle from the current identity/SPK and an OPK
+ * (opk_idx == (size_t)-1 leaves the OPK all-zeros, i.e. a registration). */
+static void
+cust_build_hybrid_bundle(const struct gy_hybrid_custodian *hc,
+                         const struct gy_suite_desc *desc, size_t opk_idx,
+                         struct gy_hybrid_prekey_bundle *b)
+{
+    memset(b, 0, sizeof(*b));
+    b->ik = hc->hik.pub;
+    b->spk = hc->hspks[0].kp.pub;
+    b->spk_timestamp = hc->hspks[0].timestamp;
+    b->spk_flags = hc->hspks[0].flags;
+    b->spk_ik_id = hc->hspks[0].ik_id;
+    memcpy(b->spk_ed_sig, hc->hspks[0].ed_sig, desc->sig_len);
+    memcpy(b->spk_mldsa_sig, hc->hspks[0].mldsa_sig, desc->dsa_sig_len);
+    if (opk_idx != (size_t)-1)
+        b->opk = hc->hopks[opk_idx].pub;
+}
+
+static int
+cust_publish_hybrid_registration(struct gy_custodian *c, uint8_t *out,
+                                 size_t *out_len)
+{
+    struct gy_hybrid_prekey_bundle b;
+
+    if (out == NULL) {
+        *out_len = gy_hybrid_bundle_wire_len(c->desc);
+        return GY_OK;
+    }
+    cust_build_hybrid_bundle(cust_as_hybrid(c), c->desc, (size_t)-1, &b);
+    return gy_hybrid_bundle_put(out, *out_len, out_len, c->desc, &b);
+}
+
+static int
+cust_publish_hybrid_bundle(struct gy_custodian *c, uint8_t *out,
+                           size_t *out_len)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_hybrid_prekey_bundle b;
+    size_t idx;
+    int rc;
+
+    if (out == NULL) {
+        *out_len = gy_hybrid_bundle_wire_len(c->desc);
+        return GY_OK;
+    }
+    idx = cust_first_reservable_hybrid_opk(hc);
+    if (idx == (size_t)-1) {
+        rc = cust_replenish_hybrid_opks(c, 1);
+        if (rc != GY_OK)
+            return rc;
+        idx = cust_first_reservable_hybrid_opk(hc);
+        if (idx == (size_t)-1)
+            return GY_ERR_CRYPTO;
+    }
+    hc->hopk_consumed[idx] = 1; /* reserved (exported); private key retained */
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        hc->hopk_consumed[idx] = 0;
+        return rc;
+    }
+    cust_build_hybrid_bundle(hc, c->desc, idx, &b);
+    return gy_hybrid_bundle_put(out, *out_len, out_len, c->desc, &b);
+}
+
+static int
+cust_publish_hybrid_opk_batch(struct gy_custodian *c, uint8_t *out,
+                              size_t *out_len)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_hybrid_public_key *pubs;
+    size_t i, n;
+    int rc;
+
+    n = 0;
+    for (i = 0; i < hc->n_hopks; i++)
+        if (hc->hopk_used[i] && !hc->hopk_consumed[i])
+            n++;
+
+    if (out == NULL) {
+        *out_len = gy_hybrid_opk_batch_wire_len(c->desc, n);
+        return GY_OK;
+    }
+
+    /* Public keys only (no secret material): plain heap, not guarded. */
+    pubs = calloc(n ? n : 1, sizeof(*pubs));
+    if (pubs == NULL)
+        return GY_ERR_CRYPTO;
+    n = 0;
+    for (i = 0; i < hc->n_hopks; i++)
+        if (hc->hopk_used[i] && !hc->hopk_consumed[i])
+            pubs[n++] = hc->hopks[i].pub;
+    rc = gy_hybrid_opk_batch_put(out, *out_len, out_len, c->desc, pubs, n);
+    free(pubs);
+    return rc;
 }
 
 int
@@ -1196,6 +1682,9 @@ gy_custodian_publish_bundle(struct gy_custodian *c, uint8_t *out,
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+
+    if (c->desc->is_hybrid)
+        return cust_publish_hybrid_bundle(c, out, out_len);
 
     /* A one-shot bundle is the directory-less / direct-handoff path: it always
      * carries an OPK (no server will slice one in later), so the size is
@@ -1244,7 +1733,8 @@ int
 gy_custodian_opk_stats(struct gy_custodian *c, size_t *total, size_t *used,
                        size_t *unused)
 {
-    size_t i, t = 0, u = 0;
+    size_t i, n, t = 0, u = 0;
+    const int *used_flags, *consumed_flags;
 
     if (c == NULL)
         return GY_ERR_ARG;
@@ -1252,11 +1742,22 @@ gy_custodian_opk_stats(struct gy_custodian *c, size_t *total, size_t *used,
     if (!c->unlocked)
         return GY_ERR_STATE;
 
-    for (i = 0; i < c->n_opks; i++) {
-        if (!c->opk_used[i])
+    if (c->desc->is_hybrid) {
+        struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+
+        n = hc->n_hopks;
+        used_flags = hc->hopk_used;
+        consumed_flags = hc->hopk_consumed;
+    } else {
+        n = c->n_opks;
+        used_flags = c->opk_used;
+        consumed_flags = c->opk_consumed;
+    }
+    for (i = 0; i < n; i++) {
+        if (!used_flags[i])
             continue;
         t++;
-        if (c->opk_consumed[i])
+        if (consumed_flags[i])
             u++;
     }
     if (total != NULL)
@@ -1281,6 +1782,8 @@ gy_custodian_publish_registration(struct gy_custodian *c, uint8_t *out,
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+    if (c->desc->is_hybrid)
+        return cust_publish_hybrid_registration(c, out, out_len);
     if (out == NULL) {
         *out_len = gy_bundle_wire_len(c->desc, 0);
         return GY_OK;
@@ -1308,6 +1811,8 @@ gy_custodian_publish_opk_batch(struct gy_custodian *c, uint8_t *out,
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+    if (c->desc->is_hybrid)
+        return cust_publish_hybrid_opk_batch(c, out, out_len);
 
     n = 0;
     for (i = 0; i < c->n_opks; i++)
@@ -1340,6 +1845,84 @@ gy_custodian_find_prekey(struct gy_custodian *c, int kind, uint32_t pkid)
     return cust_slot_find(c, type, pkid);
 }
 
+/*
+ * Delete a retained hybrid SPK (not the active one) or a hybrid OPK by handle,
+ * mirroring the classical path below but on hc->hspks / hc->hopks and resealing
+ * the hybrid idmat.  No recv rewire: the hybrid receive path reads hc->hspks /
+ * hc->hopks directly per-call (api.c).  Runs with the public entry's gates
+ * checked and slot already resolved to (type, key_id).
+ */
+static int
+cust_delete_hybrid_prekey(struct gy_custodian *c, gy_key_handle h, int type,
+                          uint32_t key_id)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_hybrid_signed_prekey backup_spks[GY_CUSTODIAN_SPK_HISTORY_MAX];
+    struct gy_hybrid_keypair backup_opk;
+    size_t backup_n_spks = 0, opk_idx = (size_t)-1, i;
+    int backup_opk_used = 0, backup_opk_consumed = 0, found = 0;
+    int rc;
+
+    memset(&backup_opk, 0, sizeof(backup_opk));
+    if (type == GY_SLOT_SPK) {
+        if (hc->n_hspks > 0 && hc->hspks[0].kp.pub.curve.pkid == key_id)
+            return GY_ERR_STATE; /* refuse to delete the active SPK */
+        backup_n_spks = hc->n_hspks;
+        memcpy(backup_spks, hc->hspks, sizeof(hc->hspks));
+        for (i = 1; i < hc->n_hspks; i++) {
+            if (hc->hspks[i].kp.pub.curve.pkid == key_id) {
+                for (; i + 1 < hc->n_hspks; i++)
+                    hc->hspks[i] = hc->hspks[i + 1];
+                gy_wipe(&hc->hspks[hc->n_hspks - 1], sizeof(hc->hspks[0]));
+                hc->n_hspks--;
+                found = 1;
+                break;
+            }
+        }
+    } else if (type == GY_SLOT_OPK) {
+        for (i = 0; i < hc->n_hopks; i++) {
+            if (hc->hopk_used[i] && hc->hopks[i].pub.curve.pkid == key_id) {
+                opk_idx = i;
+                backup_opk = hc->hopks[i];
+                backup_opk_used = hc->hopk_used[i];
+                backup_opk_consumed = hc->hopk_consumed[i];
+                gy_wipe(&hc->hopks[i], sizeof(hc->hopks[i]));
+                hc->hopk_used[i] = 0;
+                hc->hopk_consumed[i] = 0;
+                found = 1;
+                break;
+            }
+        }
+    } else {
+        return GY_ERR_ARG;
+    }
+    if (!found) {
+        gy_wipe(backup_spks, sizeof(backup_spks));
+        gy_wipe(&backup_opk, sizeof(backup_opk));
+        return GY_ERR_NOT_FOUND;
+    }
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        if (type == GY_SLOT_SPK) {
+            memcpy(hc->hspks, backup_spks, sizeof(hc->hspks));
+            hc->n_hspks = backup_n_spks;
+        } else {
+            hc->hopks[opk_idx] = backup_opk;
+            hc->hopk_used[opk_idx] = backup_opk_used;
+            hc->hopk_consumed[opk_idx] = backup_opk_consumed;
+        }
+        gy_wipe(backup_spks, sizeof(backup_spks));
+        gy_wipe(&backup_opk, sizeof(backup_opk));
+        return rc;
+    }
+    gy_wipe(backup_spks, sizeof(backup_spks));
+    gy_wipe(&backup_opk, sizeof(backup_opk));
+
+    gy_custodian_slot_free(c, h);
+    return GY_OK;
+}
+
 int
 gy_custodian_delete_prekey(struct gy_custodian *c, gy_key_handle h)
 {
@@ -1359,6 +1942,9 @@ gy_custodian_delete_prekey(struct gy_custodian *c, gy_key_handle h)
     rc = gy_custodian_slot_get(c, h, &type, &key_id);
     if (rc != GY_OK)
         return rc;
+
+    if (c->desc->is_hybrid)
+        return cust_delete_hybrid_prekey(c, h, type, key_id);
 
     /* Stage the deletion into c (the persist below reads live c state
      * directly), keeping enough of a backup to restore exactly on a
@@ -1502,6 +2088,285 @@ cust_certify_sak(struct gy_custodian *c, struct gy_cust_sak *sak,
     return rc;
 }
 
+/* ---- hybrid (dual-scheme) application signing key -----------------------
+ *
+ * The hybrid SAK is certified, and signs per-request, under BOTH XEdDSA and
+ * ML-DSA (verify requires both), so no identity-signed artifact drops to
+ * classical-only authentication in a hybrid suite.  These helpers run with the
+ * public entry point's gates already checked and the re-entrancy guard already
+ * held; the public functions dispatch here when c->desc->is_hybrid.  The XEdDSA
+ * half signs info("appkey[-cert]") || fields exactly as the classical path; the
+ * ML-DSA half signs the same bytes with FIPS 204 ctx = info("appkey[-cert]").
+ */
+
+/* appkey-cert info || curve_type || curve_pk || mldsa_pk || issued_at_be64 ||
+ * expiry_be64 || identity_pkid_be32.  Adds mldsa_pk to the classical layout so
+ * BOTH SAK public keys are bound into the certified data. */
+static int
+cust_hybrid_appkey_cert_signed_data(uint8_t *out, size_t cap, size_t *outlen,
+                                    const struct gy_suite_desc *desc,
+                                    const struct gy_public_key *sak_curve_pub,
+                                    const uint8_t *sak_mldsa_pk,
+                                    uint64_t issued_at, uint64_t expiry,
+                                    uint32_t identity_pkid)
+{
+    uint8_t info[GY_APPKEY_INFO_MAX];
+    size_t infolen, need, off;
+    int rc;
+
+    rc = gy_suite_info(info, sizeof(info), &infolen, desc->suite_id,
+                       "appkey-cert");
+    if (rc != GY_OK)
+        return rc;
+    need = infolen + 1 + desc->curve_pk_len + desc->dsa_pk_len + 8 + 8 + 4;
+    if (need > cap)
+        return GY_ERR_TOOLONG;
+
+    off = 0;
+    memcpy(out + off, info, infolen);
+    off += infolen;
+    out[off++] = sak_curve_pub->curve_type;
+    memcpy(out + off, sak_curve_pub->pk, desc->curve_pk_len);
+    off += desc->curve_pk_len;
+    memcpy(out + off, sak_mldsa_pk, desc->dsa_pk_len);
+    off += desc->dsa_pk_len;
+    put_be64(out + off, issued_at);
+    off += 8;
+    put_be64(out + off, expiry);
+    off += 8;
+    put_be32(out + off, identity_pkid);
+    off += 4;
+
+    *outlen = off;
+    return GY_OK;
+}
+
+/* Dual-certify a freshly-minted hybrid SAK into *sak under the hybrid
+ * identity's XEdDSA and ML-DSA keys. */
+static int
+cust_certify_hsak(struct gy_custodian *c, struct gy_cust_hsak *sak,
+                  uint64_t expiry)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    uint8_t signed_data[GY_APPKEY_INFO_MAX + 1 + GY_CURVE_PK_MAX +
+                        GY_DSA_PK_MAX + 8 + 8 + 4];
+    uint8_t ctx[GY_APPKEY_INFO_MAX];
+    size_t signed_len, ctxlen;
+    int rc;
+
+    sak->issued_at = c->clock != NULL ? c->clock(c->clock_ctx) : 0;
+    sak->expiry = expiry;
+    sak->identity_pkid = hc->hik.pub.base.curve.pkid;
+
+    rc = cust_hybrid_appkey_cert_signed_data(
+        signed_data, sizeof(signed_data), &signed_len, c->desc, &sak->kp.pub,
+        sak->mldsa_pk, sak->issued_at, sak->expiry, sak->identity_pkid);
+    if (rc != GY_OK)
+        return rc;
+    rc = c->desc->sign(sak->identity_ed_sig, hc->hik.curve_sk, signed_data,
+                       signed_len);
+    if (rc != GY_OK) {
+        gy_wipe(signed_data, sizeof(signed_data));
+        return rc;
+    }
+    rc = gy_suite_info(ctx, sizeof(ctx), &ctxlen, c->desc->suite_id,
+                       "appkey-cert");
+    if (rc == GY_OK)
+        rc = c->desc->dsa_sign(sak->identity_mldsa_sig, hc->hik.mldsa_sk,
+                               signed_data, signed_len, ctx, ctxlen);
+    gy_wipe(signed_data, sizeof(signed_data));
+    return rc;
+}
+
+/* Mint curve + ML-DSA SAK keypairs into *sak (kp.pub.pkid over the curve key,
+ * the slot key) and dual-certify. */
+static int
+cust_mint_hsak(struct gy_custodian *c, struct gy_cust_hsak *sak,
+               uint64_t expiry)
+{
+    int rc;
+
+    memset(sak, 0, sizeof(*sak));
+    rc = gy_identity_generate(c->desc, &sak->kp);
+    if (rc != GY_OK)
+        return rc;
+    rc = c->desc->dsa_keypair(sak->mldsa_pk, sak->mldsa_sk);
+    if (rc != GY_OK)
+        return rc;
+    return cust_certify_hsak(c, sak, expiry);
+}
+
+static int
+cust_generate_hybrid_appkey(struct gy_custodian *c, uint64_t expiry,
+                            gy_key_handle *out)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_cust_hsak *sak;
+    int rc;
+
+    if (hc->n_hsaks > 0)
+        return GY_ERR_STATE; /* already have one; rotate to replace it */
+
+    sak = gy_guarded_alloc(sizeof(*sak));
+    if (sak == NULL)
+        return GY_ERR_CRYPTO;
+    rc = cust_mint_hsak(c, sak, expiry);
+    if (rc != GY_OK) {
+        gy_wipe(sak, sizeof(*sak));
+        gy_guarded_free(sak);
+        return rc;
+    }
+
+    hc->hsaks[0] = *sak;
+    gy_wipe(sak, sizeof(*sak));
+    gy_guarded_free(sak);
+    hc->n_hsaks = 1;
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        gy_wipe(&hc->hsaks[0], sizeof(hc->hsaks[0]));
+        hc->n_hsaks = 0;
+        return rc;
+    }
+    *out = cust_slot_register(c, GY_SLOT_SAK, hc->hsaks[0].kp.pub.pkid);
+    return GY_OK;
+}
+
+static int
+cust_rotate_hybrid_appkey(struct gy_custodian *c, uint64_t expiry,
+                          gy_key_handle *out)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    struct gy_cust_hsak *newsak, *backup;
+    size_t backup_n, i;
+    gy_key_handle evict_h = GY_KEY_HANDLE_INVALID;
+    int rc;
+
+    if (hc->n_hsaks == 0)
+        return GY_ERR_STATE; /* nothing to rotate; generate first */
+
+    newsak = gy_guarded_alloc(sizeof(*newsak));
+    backup = gy_guarded_alloc(sizeof(*backup) * GY_CUSTODIAN_SAK_HISTORY_MAX);
+    if (newsak == NULL || backup == NULL) {
+        gy_guarded_free(newsak);
+        gy_guarded_free(backup);
+        return GY_ERR_CRYPTO;
+    }
+    rc = cust_mint_hsak(c, newsak, expiry);
+    if (rc != GY_OK)
+        goto out;
+
+    /* Backup-then-mutate-then-restore-on-failure, matching the classical
+     * rotate and gy_custodian_rotate_signed_prekey (see their comments). */
+    backup_n = hc->n_hsaks;
+    memcpy(backup, hc->hsaks, sizeof(hc->hsaks));
+
+    if (hc->n_hsaks == GY_CUSTODIAN_SAK_HISTORY_MAX) {
+        size_t tail = GY_CUSTODIAN_SAK_HISTORY_MAX - 1;
+
+        evict_h = cust_slot_find(c, GY_SLOT_SAK, hc->hsaks[tail].kp.pub.pkid);
+        hc->n_hsaks--;
+    }
+    for (i = hc->n_hsaks; i > 0; i--)
+        hc->hsaks[i] = hc->hsaks[i - 1];
+    hc->hsaks[0] = *newsak;
+    hc->n_hsaks++;
+
+    rc = cust_seal_and_persist_hybrid_idmat(c);
+    if (rc != GY_OK) {
+        memcpy(hc->hsaks, backup, sizeof(hc->hsaks));
+        hc->n_hsaks = backup_n;
+        goto out;
+    }
+    if (evict_h != GY_KEY_HANDLE_INVALID)
+        gy_custodian_slot_free(c, evict_h);
+    *out = cust_slot_register(c, GY_SLOT_SAK, hc->hsaks[0].kp.pub.pkid);
+out:
+    gy_wipe(newsak, sizeof(*newsak));
+    gy_wipe(backup, sizeof(*backup) * GY_CUSTODIAN_SAK_HISTORY_MAX);
+    gy_guarded_free(newsak);
+    gy_guarded_free(backup);
+    return rc;
+}
+
+static int
+cust_export_hybrid_appkey_cert(struct gy_custodian *c, uint32_t key_id,
+                               uint8_t *out, size_t *out_len)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    size_t i;
+
+    for (i = 0; i < hc->n_hsaks; i++)
+        if (hc->hsaks[i].kp.pub.pkid == key_id)
+            break;
+    if (i == hc->n_hsaks)
+        return GY_ERR_NOT_FOUND;
+
+    if (out == NULL) {
+        *out_len = gy_hybrid_appkey_cert_wire_len(c->desc);
+        return GY_OK;
+    }
+    return gy_hybrid_appkey_cert_put(
+        out, *out_len, out_len, c->desc, &hc->hsaks[i].kp.pub,
+        hc->hsaks[i].mldsa_pk, hc->hsaks[i].issued_at, hc->hsaks[i].expiry,
+        hc->hsaks[i].identity_pkid, hc->hsaks[i].identity_ed_sig,
+        hc->hsaks[i].identity_mldsa_sig);
+}
+
+/* Per-request dual signature: sig = ed_sig || mldsa_sig over
+ * info("appkey") || be32(app_ctx_len) || app_ctx || msg. */
+static int
+cust_hybrid_sign(struct gy_custodian *c, uint32_t key_id,
+                 const uint8_t *app_ctx, size_t app_ctx_len, const uint8_t *msg,
+                 size_t msg_len, uint8_t *sig, size_t *sig_len)
+{
+    struct gy_hybrid_custodian *hc = cust_as_hybrid(c);
+    uint8_t signed_data[GY_APPKEY_INFO_MAX + 4 + GY_CUSTODIAN_SIGN_MAX];
+    uint8_t info[GY_APPKEY_INFO_MAX];
+    size_t infolen, off, i, need;
+    int rc;
+
+    need = c->desc->sig_len + c->desc->dsa_sig_len;
+    for (i = 0; i < hc->n_hsaks; i++)
+        if (hc->hsaks[i].kp.pub.pkid == key_id)
+            break;
+    if (i == hc->n_hsaks)
+        return GY_ERR_NOT_FOUND;
+
+    if (sig == NULL) {
+        *sig_len = need;
+        return GY_OK;
+    }
+    if (*sig_len < need)
+        return GY_ERR_ARG;
+
+    rc = gy_suite_info(info, sizeof(info), &infolen, c->desc->suite_id,
+                       "appkey");
+    if (rc != GY_OK)
+        return rc;
+    off = 0;
+    memcpy(signed_data + off, info, infolen);
+    off += infolen;
+    put_be32(signed_data + off, (uint32_t)app_ctx_len);
+    off += 4;
+    if (app_ctx_len > 0)
+        memcpy(signed_data + off, app_ctx, app_ctx_len);
+    off += app_ctx_len;
+    if (msg_len > 0)
+        memcpy(signed_data + off, msg, msg_len);
+    off += msg_len;
+
+    rc = c->desc->sign(sig, hc->hsaks[i].kp.sk, signed_data, off);
+    if (rc == GY_OK)
+        rc = c->desc->dsa_sign(sig + c->desc->sig_len, hc->hsaks[i].mldsa_sk,
+                               signed_data, off, info, infolen);
+    gy_wipe(signed_data, sizeof(signed_data));
+    if (rc != GY_OK)
+        return rc;
+    *sig_len = need;
+    return GY_OK;
+}
+
 int
 gy_custodian_generate_appkey(struct gy_custodian *c, uint64_t expiry,
                              gy_key_handle *out)
@@ -1516,6 +2381,8 @@ gy_custodian_generate_appkey(struct gy_custodian *c, uint64_t expiry,
         return GY_ERR_STATE;
     if (!c->have_identity)
         return GY_ERR_STATE;
+    if (c->desc->is_hybrid)
+        return cust_generate_hybrid_appkey(c, expiry, out);
     if (c->n_saks > 0)
         return GY_ERR_STATE; /* already have one; rotate to replace it */
 
@@ -1559,6 +2426,8 @@ gy_custodian_rotate_appkey(struct gy_custodian *c, uint64_t expiry,
     CUST_ENTER(c);
     if (!c->unlocked)
         return GY_ERR_STATE;
+    if (c->desc->is_hybrid)
+        return cust_rotate_hybrid_appkey(c, expiry, out);
     if (c->n_saks == 0)
         return GY_ERR_STATE; /* nothing to rotate; generate first */
 
@@ -1628,6 +2497,9 @@ gy_custodian_export_appkey_cert(struct gy_custodian *c, gy_key_handle h,
     if (type != GY_SLOT_SAK)
         return GY_ERR_ARG;
 
+    if (c->desc->is_hybrid)
+        return cust_export_hybrid_appkey_cert(c, key_id, out, out_len);
+
     for (i = 0; i < c->n_saks; i++)
         if (c->saks[i].kp.pub.pkid == key_id)
             break;
@@ -1675,6 +2547,10 @@ gy_custodian_sign(struct gy_custodian *c, gy_key_handle h,
         return rc;
     if (type != GY_SLOT_SAK)
         return GY_ERR_ARG;
+
+    if (c->desc->is_hybrid)
+        return cust_hybrid_sign(c, key_id, app_ctx, app_ctx_len, msg, msg_len,
+                                sig, sig_len);
 
     for (i = 0; i < c->n_saks; i++)
         if (c->saks[i].kp.pub.pkid == key_id)

@@ -169,6 +169,28 @@ struct gy_cust_sak {
     uint8_t identity_sig[GY_SIG_MAX];
 };
 
+/*
+ * A held HYBRID application signing key (HYBRID_SPEC section on the hybrid SAK):
+ * a dual-scheme signer (curve XEdDSA keypair kp PLUS an ML-DSA keypair
+ * mldsa_pk/mldsa_sk), certified by the hybrid identity under BOTH schemes.  Per-
+ * request signatures and the identity certificate are each an XEdDSA + ML-DSA
+ * pair, verified together (both-or-abort), matching hybrid prekey signing; this
+ * removes the one identity-signed artifact that would otherwise lack PQ
+ * authentication in a hybrid suite.  kp.pub.pkid (over the curve public key) is
+ * the slot key, as for a classical SAK.  identity_ed_sig / identity_mldsa_sig
+ * cover appkey-cert info || curve_type || curve_pk || mldsa_pk || issued_at_be64
+ * || expiry_be64 || identity_pkid_be32 (see custodian.c). */
+struct gy_cust_hsak {
+    struct gy_keypair kp;
+    uint8_t mldsa_pk[GY_DSA_PK_MAX];
+    uint8_t mldsa_sk[GY_DSA_SK_MAX];
+    uint64_t issued_at;
+    uint64_t expiry;
+    uint32_t identity_pkid;
+    uint8_t identity_ed_sig[GY_SIG_MAX];
+    uint8_t identity_mldsa_sig[GY_DSA_SIG_MAX];
+};
+
 struct gy_cust_idmat {
     struct gy_keypair ik;
     /* [0] = current/active SPK; [1..n_spks) = retained history, most-recent
@@ -196,8 +218,38 @@ struct gy_cust_idmat {
 
 #define GY_CUST_IDMAT_MAX sizeof(struct gy_cust_idmat)
 #define GY_CUST_IDMAT_SEALED_MAX (GY_CUST_IDMAT_MAX + GY_SEAL_MAX_OVERHEAD)
-/* The full store_identity payload: header || sealed identity material. */
-#define GY_CUST_BLOB_MAX (GY_CUST_HDR_MAX + GY_CUST_IDMAT_SEALED_MAX)
+
+/*
+ * Hybrid private material (HYBRID_SPEC section 4/5): the same shape as
+ * gy_cust_idmat but with hybrid identity/signed-prekey/one-time-prekey types.
+ * The application signing keys are hybrid too (gy_cust_hsak): a hybrid identity
+ * certifies its SAK under both schemes, so no identity-signed artifact drops to
+ * classical-only authentication.  Much larger than the classical idmat (the
+ * ML-KEM OPK pool dominates), so it is always guard-allocated, never a stack
+ * local.
+ */
+struct gy_cust_hybrid_idmat {
+    struct gy_hybrid_identity_keypair ik;
+    struct gy_hybrid_signed_prekey spks[GY_CUSTODIAN_SPK_HISTORY_MAX];
+    uint64_t n_spks;
+    struct gy_hybrid_keypair opks[GY_OPK_BATCH_MAX];
+    uint8_t opk_used[GY_OPK_BATCH_MAX];
+    uint8_t opk_consumed[GY_OPK_BATCH_MAX];
+    uint64_t n_opks;
+    struct gy_cust_hsak saks[GY_CUSTODIAN_SAK_HISTORY_MAX];
+    uint64_t n_saks;
+};
+
+#define GY_CUST_HYBRID_IDMAT_MAX sizeof(struct gy_cust_hybrid_idmat)
+#define GY_CUST_HYBRID_IDMAT_SEALED_MAX                                        \
+    (GY_CUST_HYBRID_IDMAT_MAX + GY_SEAL_MAX_OVERHEAD)
+
+/*
+ * The full store_identity payload: header || sealed identity material.  Sized to
+ * the LARGER (hybrid) sealed material so the one open/persist buffer serves both
+ * suite families; a classical custodian's blob is far smaller.
+ */
+#define GY_CUST_BLOB_MAX (GY_CUST_HDR_MAX + GY_CUST_HYBRID_IDMAT_SEALED_MAX)
 
 struct gy_custodian {
     struct gy_keystore ks;
@@ -264,6 +316,32 @@ struct gy_custodian {
 
     int unlocked;
     int active; /* D-GEN-8 debug re-entrancy guard */
+};
+
+/*
+ * Hybrid custodian (composition): a gy_custodian base plus the hybrid identity
+ * material.  Allocated (guarded) in place of a bare gy_custodian for hybrid
+ * suites; because `base` is the first member, the public gy_custodian* the API
+ * holds IS this object, and hybrid-specific code upcasts back to the outer
+ * struct when it needs the hybrid material (gy_cust_as_hybrid).  The base's
+ * classical ik/spks/opks stay zero; base.send/base.recv (and their op arenas)
+ * ARE reused - steady-state encrypt/recv dispatch on the session suite, and
+ * hybrid initiate/INIT-recv take base.send/base.recv plus this material.  The
+ * hybrid SAK history (hsaks) lives here: dual-scheme app-cert signing under the
+ * hybrid identity, so the base's classical saks[] stays empty for hybrid.
+ */
+struct gy_hybrid_custodian {
+    struct gy_custodian base;
+
+    struct gy_hybrid_identity_keypair hik;
+    struct gy_hybrid_signed_prekey hspks[GY_CUSTODIAN_SPK_HISTORY_MAX];
+    size_t n_hspks;
+    struct gy_hybrid_keypair hopks[GY_OPK_BATCH_MAX];
+    int hopk_used[GY_OPK_BATCH_MAX];
+    int hopk_consumed[GY_OPK_BATCH_MAX];
+    size_t n_hopks;
+    struct gy_cust_hsak hsaks[GY_CUSTODIAN_SAK_HISTORY_MAX];
+    size_t n_hsaks;
 };
 
 /*

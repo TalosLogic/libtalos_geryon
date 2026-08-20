@@ -1,0 +1,246 @@
+(* formal/models/agreement.pv
+ *
+ * STAGE 1: initiator authentication across the confirmation
+ * chain (HYBRID_SPEC §8), the AUTH-focused core. Consumes
+ * formal/lib/geryon.pvl only.
+ *
+ * Establishes the PQ-pending boundary (D-FM-4.3): the SAME quantum
+ * attacker (BrokenDH) that forges Alice's first flight (pre-confirmation
+ * impersonation, EXPECTED, §10.8) canNOT defeat initiator authentication
+ * AFTER InitiatorPQConfirmed, because continuing the session requires
+ * decapsulating confirm_ss to Alice's identity ML-KEM key. The contrast
+ * between queries 1 and 2 is the state gy_pq_pending() reports
+ * (include/geryon.h).
+ *
+ * SCOPE - authentication core vs forward secrecy (the ratchet model):
+ * initiator authentication rests on exactly two values:
+ *   - DH1 = DH(IK_A, SPK_B), the one NON-ephemeral DH pair (pre-conf),
+ *   - confirm_ss = Encaps(IK_A.mlkem_ek), the confirmation KEM (post-conf).
+ * DH2/DH3 and the confirmation-step ratchet dh/kem_ss all mix the
+ * initiator EPHEMERAL, so they carry forward secrecy, not initiator
+ * authentication. This model therefore keeps DH1 + the KEM legs and
+ * models the confirmation as confirm_ss; the ephemeral FS legs and the
+ * full ratchet are in ratchet.pv. The single DH term is also
+ * what keeps ProVerif's clause set convergent under the DH commutation
+ * equation - the fuller model diverges (raw DH exponents + commutation).
+ *
+ * PERFORMANCE / SCOPE: two FIXED honest identities (one Alice, one Bob),
+ * Bob's SPK minted once; only roles are replicated. Alice is given Bob's
+ * bundle directly (her dual-signature check still runs). BrokenDH /
+ * BrokenKEM are direct event-gated leaks of the honest LONG-TERM ECDH /
+ * KEM secrets (the quantum attacker: all ECDH secrets revealed); the model
+ * has no ephemeral asymmetric secret to leak (the ephemeral legs are in
+ * ratchet.pv).
+ * This is the standard 2-party authentication scope (BJKS) and does not
+ * weaken the queries, which quantify over unbounded sessions of the fixed
+ * parties. Arbitrary-identity handshakes: x3dh_secrecy.pv.
+ *
+ * Other abstractions: single suite (D-FM-4 amendment); PKIDs as
+ * HASH(encodeEC(.)). ek agreement (D-FM-4.5) lives in ek_agreement.pv
+ * (proved as-is). Query 1 is NON-injective: injective (replay-free)
+ * agreement rests on the §6.8 base-key dedupe and ratchet message
+ * counters (§7.2), which are STATEFUL session-layer defenses; ProVerif
+ * tables cannot express the atomic test-and-set that models them, so at
+ * the handshake layer a replay would give two responder confirms for one
+ * initiator - an artifact of unmodeled replay protection, not an attack.
+ * Injectivity is therefore the ratchet model (ratchet.pv).
+ *
+ * Queries and expected verdicts (see formal/README.md):
+ *   1. post-confirmation agreement: BobPQConfirmed ==> InitiatorPQConfirmed
+ *        unless CompromiseKEM(Alice IK ek) or BrokenKEM : proved
+ *        (NOT defeated by BrokenDH - the hybrid PQ win)
+ *   2. pre-confirmation impersonation (EXPECTED attack, D-FM-4.3):
+ *        ResponderAccepted ==> InitiatorStarted || CompromiseCurve(IK_A)
+ *          || CompromiseCurve(SPK_B)  (BrokenDH omitted) : attack
+ *   3. non-vacuity: honest 3-flight run reaches Bob's PQ-confirm : attack
+ *   4. Alice-authenticates-Bob: AliceAcceptedBob ==> ResponderConfirmed
+ *        unless Bob's IK/SPK KEM compromised or BrokenKEM : proved
+ *        (NOT defeated by BrokenDH - symmetric hybrid win)
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+event BobPQConfirmed(suite, interval, aead, point, kempub, bitstring).
+
+(* Alice accepts Bob's flight 2 (decrypts ct2): carries Bob's IK and SPK
+ * ML-KEM pubs so the query can name their compromise. *)
+event AliceAcceptedBob(suite, interval, aead, bitstring, bitstring, kempub, kempub).
+
+table honestIK(point, kempub, mldsapub).
+
+free reached_confirmed: bitstring [private].
+
+(* --- Query 1: post-confirmation agreement (D-FM-4.3, non-injective) ----
+ * Bob confirming Alice's PQ identity (accepting flight 3) implies an
+ * honest Alice reached InitiatorPQConfirmed, unless her IK ML-KEM key is
+ * compromised or the KEM is broken. BrokenDH is deliberately absent: a
+ * quantum attacker gets SK but not confirm_ss, so cannot forge flight 3. *)
+query su: suite, iv: interval, ae: aead, xa: point, ka: kempub,
+      eb: bitstring, sp2: bitstring, op2: bitstring;
+    event(BobPQConfirmed(su, iv, ae, xa, ka, eb)) ==>
+        event(InitiatorPQConfirmed(su, iv, ae, encodeEC(xa), eb, sp2, op2))
+        || event(CompromiseKEM(ka))
+        || event(BrokenKEMev).
+
+(* --- Query 2: pre-confirmation impersonation (EXPECTED attack) ---------
+ * The §10.8 flight-1 set minus BrokenDH; FALSE, the trace is the quantum
+ * pre-confirmation impersonation. *)
+query su: suite, iv: interval, ae: aead, xa: point, zs: point,
+      eb: bitstring, op: bitstring, sp2: bitstring, op2: bitstring;
+    event(ResponderAccepted(su, iv, ae, encodeEC(xa), eb, encodeEC(zs), op)) ==>
+        event(InitiatorStarted(su, iv, ae, encodeEC(xa), eb, sp2, op2))
+        || event(CompromiseCurve(xa))
+        || event(CompromiseCurve(zs)).
+
+(* --- Query 3: non-vacuity of the three-flight honest run --------------- *)
+query attacker(reached_confirmed).
+
+(* --- Query 4: Alice authenticates Bob from flight 2 (D-FM-4) -----
+ * Alice accepting Bob's confirmation reply implies Bob sent it
+ * (ResponderConfirmed), unless the KEM side is broken (Bob's IK or SPK
+ * ML-KEM key compromised, or BrokenKEM). Forging flight 2 requires SK,
+ * which requires Bob's KEM decapsulations; BrokenDH alone does NOT defeat
+ * it (the symmetric hybrid win to query 1). *)
+query su: suite, iv: interval, ae: aead, ea2: bitstring, eb2: bitstring,
+      eik: kempub, espk: kempub, sp: bitstring, op: bitstring;
+    event(AliceAcceptedBob(su, iv, ae, ea2, eb2, eik, espk)) ==>
+        event(ResponderConfirmed(su, iv, ae, ea2, eb2, sp, op))
+        || event(CompromiseKEM(eik))
+        || event(CompromiseKEM(espk))
+        || event(BrokenKEMev).
+
+(* ====================================================================
+ * Initiator role (Alice), fixed keys; Bob's bundle passed in.
+ * ================================================================== *)
+let InitiatorSession(iksk_a: scalar, ikkem_a: kempriv, ikc_a: point,
+                     ike_a: kempub, ikd_a: mldsapub,
+                     ikc_b: point, ike_b: kempub, ikd_b: mldsapub,
+                     spkc_b: point, spke_b: kempub, sd: bitstring,
+                     ed: bitstring, md: bitstring, iv: interval, ae: aead) =
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    if prekey_ok(ikc_b, ikd_b, sd, ctx, ed, md) then
+    let (ct_ik:  bitstring, kem_ik:  bitstring) = pqkem_enc(ike_b) in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spke_b) in
+    (* auth core: HDH1 = hdh(kem_spk, DH1); the ephemeral legs (ratchet.pv) are
+     * represented by their KEM secrets only. *)
+    let sk = x3dh_sk3(su_h25519_512,
+                      hdh(kem_spk, ecdh(iksk_a, spkc_b)),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc_b, ike_b, ikd_b) in
+    let ea = encodeEC(ikc_a) in
+    let eb = encodeEC(ikc_b) in
+    let hf = hflag(iv, ae) in
+    let adf = ad_frst(ha, hb, hf) in
+    let ads = ad_session(ha, hb) in
+    let ik_id_b = HASH(encodeEC(ikc_b)) in
+    let spk_id  = HASH(encodeEC(spkc_b)) in
+    let k1 = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    new msg1: bitstring;
+    event InitiatorStarted(su_h25519_512, iv, ae, ea, eb, spk_id, zeros);
+    out(pub, (ikc_a, ike_a, ikd_a, ct_ik, ct_spk, ik_id_b, spk_id, hf,
+              aead_enc(k1, adf, msg1)));
+    (* flight 2: Bob's confirmation reply *)
+    in(pub, (confirm_ct: bitstring, ct2: bitstring));
+    let confirm_ss = pdec(ikkem_a, confirm_ct) in
+    let root2 = rk_split(kdf_rk(su_h25519_512, sk,
+                                HASH(encodeKEM(confirm_ss)))) in
+    let plain2 = aead_dec(HKDF(root2, zeros, INFO(su_h25519_512, pu_dr_msg)),
+                          ads, ct2) in
+    event AliceAcceptedBob(su_h25519_512, iv, ae, ea, eb, ike_b, spke_b);
+    (* flight 3: first post-confirmation message *)
+    let k3 = HKDF(root2, zeros, INFO(su_h25519_512, pu_dr_chain)) in
+    new msg3: bitstring;
+    event InitiatorPQConfirmed(su_h25519_512, iv, ae, ea, eb, spk_id, zeros);
+    out(pub, aead_enc(k3, ads, msg3)).
+
+(* ====================================================================
+ * Responder role (Bob), fixed keys incl. the minted SPK.
+ * ================================================================== *)
+let ResponderSession(iksk: scalar, ikkem: kempriv, ikc: point, ike: kempub,
+                     ikd: mldsapub, spksk: scalar, spkkem: kempriv,
+                     spk_id: bitstring, iv: interval, ae: aead) =
+    in(pub, (ikc_a: point, ike_a: kempub, ikd_a: mldsapub,
+             ct_ik: bitstring, ct_spk: bitstring, ik_id_b: bitstring,
+             spk_id_msg: bitstring, hf: bitstring, ct1: bitstring));
+    let my_ik_id = HASH(encodeEC(ikc)) in
+    if ik_id_b = my_ik_id then
+    get honestIK(=ikc_a, =ike_a, =ikd_a) in
+    let hflag(=iv, =ae) = hf in
+    let kem_ik  = pdec(ikkem,  ct_ik)  in
+    let kem_spk = pdec(spkkem, ct_spk) in
+    let sk = x3dh_sk3(su_h25519_512,
+                      hdh(kem_spk, ecdh(spksk, ikc_a)),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc, ike, ikd) in
+    let ea = encodeEC(ikc_a) in
+    let eb = encodeEC(ikc) in
+    let adf = ad_frst(ha, hb, hf) in
+    let ads = ad_session(ha, hb) in
+    let plain1 = aead_dec(HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)),
+                          adf, ct1) in
+    event ResponderAccepted(su_h25519_512, iv, ae, ea, eb,
+                            encodeEC(smul(spksk, gen)), zeros);
+    (* flight 2 (§8.3): confirmation encapsulation to Alice's IK ML-KEM key *)
+    let (confirm_ct: bitstring, confirm_ss: bitstring) = pqkem_enc(ike_a) in
+    let root2 = rk_split(kdf_rk(su_h25519_512, sk,
+                                HASH(encodeKEM(confirm_ss)))) in
+    new msg2: bitstring;
+    event ResponderConfirmed(su_h25519_512, iv, ae, ea, eb, spk_id, zeros);
+    out(pub, (confirm_ct,
+              aead_enc(HKDF(root2, zeros, INFO(su_h25519_512, pu_dr_msg)),
+                       ads, msg2)));
+    (* flight 3: PQ_CONFIRMED *)
+    in(pub, ct3: bitstring);
+    let plain3 = aead_dec(HKDF(root2, zeros, INFO(su_h25519_512, pu_dr_chain)),
+                          ads, ct3) in
+    event BobPQConfirmed(su_h25519_512, iv, ae, ikc_a, ike_a, eb);
+    out(pub, reached_confirmed).
+
+(* ==================================================================== *)
+process
+    (* Alice (fixed honest) *)
+    new ika_sk: scalar; new ika_kem: kempriv; new ika_dsa: mldsapriv;
+    let ikc_a = smul(ika_sk, gen) in
+    let ike_a = kempk(ika_kem) in
+    let ikd_a = mldsapk(ika_dsa) in
+    (* Bob (fixed honest) *)
+    new ikb_sk: scalar; new ikb_kem: kempriv; new ikb_dsa: mldsapriv;
+    let ikc_b = smul(ikb_sk, gen) in
+    let ike_b = kempk(ikb_kem) in
+    let ikd_b = mldsapk(ikb_dsa) in
+    (* Bob's signed prekey (minted once) *)
+    new spksk: scalar; new spkkem: kempriv;
+    new ts: bitstring; new flags: bitstring; new iv: interval;
+    let ae = ae_chacha in
+    let spkc = smul(spksk, gen) in
+    let spke = kempk(spkkem) in
+    let sd  = signed_data(ppair(spkc, spke), ts, flags) in
+    let ed  = xeddsa_sign(ikb_sk, sd) in
+    let md  = mldsa_sign(ikb_dsa, sd, INFO(su_h25519_512, pu_prekey)) in
+    let spk_id = HASH(encodeEC(spkc)) in
+    insert honestIK(ikc_a, ike_a, ikd_a);
+    insert honestIK(ikc_b, ike_b, ikd_b);
+    out(pub, (ikc_a, ike_a, ikd_a, ikc_b, ike_b, ikd_b, spkc, spke, sd, ed, md));
+    (
+        (* compromises referenced by the query defeating sets *)
+        CompromiseCurveKey(ika_sk) | CompromiseKEMKey(ika_kem)
+      | CompromiseCurveKey(spksk)  | CompromiseKEMKey(spkkem)
+        (* roles, replicated *)
+      | !InitiatorSession(ika_sk, ika_kem, ikc_a, ike_a, ikd_a,
+                          ikc_b, ike_b, ikd_b, spkc, spke, sd, ed, md, iv, ae)
+      | !ResponderSession(ikb_sk, ikb_kem, ikc_b, ike_b, ikd_b,
+                          spksk, spkkem, spk_id, iv, ae)
+        (* BrokenDH / BrokenKEM as direct leaks of the honest LONG-TERM
+         * ECDH / KEM secrets (finite set; no ephemeral asymmetric secret
+         * exists in this auth-core model). Replaces the lib's dlog/kemdlog
+         * oracle, which diverges here under the DH commutation equation. *)
+      | (event BrokenDHev;  out(pub, ika_sk))
+      | (event BrokenDHev;  out(pub, ikb_sk))
+      | (event BrokenDHev;  out(pub, spksk))
+      | (event BrokenKEMev; out(pub, ika_kem))
+      | (event BrokenKEMev; out(pub, ikb_kem))
+      | (event BrokenKEMev; out(pub, spkkem))
+    )

@@ -12,6 +12,8 @@
 #ifndef GERYON_DEMO_CLIENT_H
 #define GERYON_DEMO_CLIENT_H
 
+#include <stdint.h>
+
 enum client_role {
     CLIENT_INITIATOR = 0, /* fetches the peer bundle and speaks first (Alice) */
     CLIENT_RESPONDER = 1  /* waits for the initial message (Bob) */
@@ -23,6 +25,11 @@ struct client_cfg {
     const char *store_dir; /* per-client sealed-store directory */
     const char *cred;      /* store passphrase */
     enum client_role role;
+    uint8_t suite; /* GY_SUITE_* pinned per identity; the ONLY per-suite knob a
+                    * consumer sets.  The whole messaging path below is
+                    * suite-agnostic (D-GEN-9): classical vs hybrid differ only
+                    * in this value at create time, plus gy_pq_pending lighting
+                    * up for a hybrid identity. */
 };
 
 /*

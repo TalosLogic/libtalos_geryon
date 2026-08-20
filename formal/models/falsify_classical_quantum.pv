@@ -1,0 +1,48 @@
+(* formal/models/falsify_classical_quantum.pv
+ *
+ * Falsification model i (D-FM-5). A CLASSICAL suite - no KEM
+ * anywhere - under the quantum attacker (BrokenDH). SK secrecy MUST be
+ * FALSE. This documents formally WHY the hybrid suites exist: with only
+ * X3DH's DH legs and no ML-KEM contribution, an adversary who breaks the
+ * curve recovers the shared secret outright. Consumes formal/lib/geryon.pvl.
+ *
+ * A falsification model is a deliberate degradation whose attack CI
+ * asserts ProVerif finds (a `proved` here would be a gate FAILURE - it
+ * would mean the attacker model lost its teeth). The contrast is with the
+ * hybrid claim proved in x3dh_secrecy.pv: there, BrokenDH alone does NOT
+ * defeat SK secrecy because the KEM leg survives.
+ *
+ * MODELING: the classical SK is HKDF over the raw DH outputs only
+ * (x3dh_sk3 with the DH legs passed directly, NOT wrapped in an HDH
+ * combiner - there is no kem_ss to fuse). The DH outputs are modeled as
+ * opaque per-leg shared secrets (the agreement/ratchet tractability
+ * convention); BrokenDH publishes them, which is exactly "all ECDH secrets
+ * revealed" (the quantum attacker). The suite constant is cosmetic here - the
+ * load-bearing fact is the ABSENCE of any KEM input.
+ *
+ * Query and expected verdict (see formal/README.md):
+ *   SK secrecy under BrokenDH: attacker(secret_sk) : attack (is false)
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+free adc: bitstring.
+free secret_sk: bitstring [private].   (* delivered under an SK-derived key *)
+
+(* EXPECTED ATTACK: a classical suite under BrokenDH leaks SK. *)
+query attacker(secret_sk).
+
+process
+    let su = su_h25519_512 in   (* cosmetic; the point is: NO KEM leg below *)
+    (* classical X3DH: SK = HKDF(F || DH1 || DH2 || DH3); DH outputs opaque *)
+    new dh1: bitstring;
+    new dh2: bitstring;
+    new dh3: bitstring;
+    let sk = x3dh_sk3(su, dh1, dh2, dh3) in
+    let k1 = HKDF(sk, zeros, INFO(su, pu_dr_aead)) in
+    out(pub, aead_enc(k1, adc, secret_sk));
+    (* quantum attacker: every ECDH secret revealed (D-FM-2 BrokenDH) *)
+    (
+        ( event BrokenDHev; out(pub, dh1) )
+      | ( event BrokenDHev; out(pub, dh2) )
+      | ( event BrokenDHev; out(pub, dh3) )
+    )

@@ -22,7 +22,8 @@
  */
 
 #include "double_ratchet.h" /* gy_dr_state, gy_dr_init_*, encrypt/decrypt */
-#include "prekeys.h"        /* gy_keypair, gy_public_key, bundle, fingerprint */
-#include "x3dh.h"           /* gy_dr_secrets, gy_x3dh_initiate/respond */
+#include "hybrid_double_ratchet.h" /* gy_hybrid_dr_state, hybrid init/step (S.8) */
+#include "prekeys.h" /* gy_keypair, gy_public_key, bundle, fingerprint */
+#include "x3dh.h"    /* gy_dr_secrets, gy_x3dh_initiate/respond */
 
 #endif /* GY_RATCHET_H */

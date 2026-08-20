@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(libtalos_geryon
-    VERSION 1.0.0
+    VERSION 1.1.0
     LANGUAGES C
 )
 
@@ -26,6 +26,19 @@ option(GERYON_BUILD_EXAMPLES "Build the end-to-end example" ON)
 # The dudect-style timing-validation harness (tests/timing) is a manual /
 # nightly tool, never part of the merge gate; keep it off by default.
 option(GERYON_BUILD_TIMING "Build the timing-leak validation harness" OFF)
+
+# liboqs backend dispatch (D-PQ-2): ON builds with runtime CPU dispatch
+# (OQS_DIST_BUILD); OFF selects the pure-C _ref backends on every arch. Default
+# tracks the build type - ON for Release, OFF for Debug - so day-to-day builds
+# and CI exercise BOTH code paths. Independently overridable; the timing
+# configuration is Release + OFF (D-PQ-4).
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(GERYON_OQS_DIST_DEFAULT OFF)
+else()
+    set(GERYON_OQS_DIST_DEFAULT ON)
+endif()
+option(GERYON_OQS_DIST "Build liboqs with runtime CPU dispatch (OQS_DIST_BUILD)"
+    ${GERYON_OQS_DIST_DEFAULT})
 
 # Comma-separated sanitizer list, e.g. -DGERYON_SANITIZE=address,undefined.
 # Appended to both the library and the tests.
@@ -115,6 +128,75 @@ target_include_directories(monocypher PUBLIC
 target_compile_options(monocypher PRIVATE -w)
 
 # -----------------------------------------------------------------------------
+# liboqs (pinned 0.16.0) built from source via ExternalProject (static, PIC,
+# installed into the build tree). Only the four closed-suite algorithms are
+# compiled (ML-KEM-512/1024 + ML-DSA-44/87, D-GEN-7); OpenSSL is OFF so
+# libsodium stays the only symmetric provider (liboqs falls back to its
+# internal SHAKE). Linked PRIVATE into geryon_core, deliberately NOT
+# add_subdirectory, so liboqs's option namespace and CMake policies stay
+# isolated (D-PQ-2, the same pattern as libsodium above).
+# -----------------------------------------------------------------------------
+
+set(LIBOQS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/liboqs")
+set(LIBOQS_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/liboqs-install")
+set(LIBOQS_INCLUDE_DIR "${LIBOQS_INSTALL_DIR}/include")
+set(LIBOQS_LIB "${LIBOQS_INSTALL_DIR}/lib/liboqs.a")
+
+# Dispatch selection (D-PQ-2). When dispatch is OFF, force every mlkem-native
+# backend to the pure-C _ref path on both arches; when ON, OQS_DIST_BUILD picks
+# per-CPU at runtime.
+if(GERYON_OQS_DIST)
+    set(LIBOQS_BACKEND_ARGS -DOQS_DIST_BUILD:BOOL=ON)
+else()
+    set(LIBOQS_BACKEND_ARGS
+        -DOQS_DIST_BUILD:BOOL=OFF
+        -DOQS_ENABLE_KEM_ml_kem_512_x86_64:BOOL=OFF
+        -DOQS_ENABLE_KEM_ml_kem_512_aarch64:BOOL=OFF
+        -DOQS_ENABLE_KEM_ml_kem_1024_x86_64:BOOL=OFF
+        -DOQS_ENABLE_KEM_ml_kem_1024_aarch64:BOOL=OFF
+        -DOQS_ENABLE_SIG_ml_dsa_44_x86_64:BOOL=OFF
+        -DOQS_ENABLE_SIG_ml_dsa_44_aarch64:BOOL=OFF
+        -DOQS_ENABLE_SIG_ml_dsa_87_x86_64:BOOL=OFF
+        -DOQS_ENABLE_SIG_ml_dsa_87_aarch64:BOOL=OFF
+    )
+endif()
+
+ExternalProject_Add(liboqs_build
+    SOURCE_DIR  "${LIBOQS_SOURCE_DIR}"
+    INSTALL_DIR "${LIBOQS_INSTALL_DIR}"
+
+    UPDATE_COMMAND ""
+    PATCH_COMMAND  ""
+
+    # OQS_MINIMAL_BUILD is a semicolon list; LIST_SEPARATOR lets us write it
+    # with '|' so ExternalProject does not eat the separators as its own
+    # argument boundaries.
+    LIST_SEPARATOR |
+    CMAKE_CACHE_ARGS
+        -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
+        -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
+        -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON
+        -DBUILD_SHARED_LIBS:BOOL=OFF
+        -DOQS_USE_OPENSSL:BOOL=OFF
+        -DOQS_BUILD_ONLY_LIB:BOOL=ON
+        -DOQS_MINIMAL_BUILD:STRING=KEM_ml_kem_512|KEM_ml_kem_1024|SIG_ml_dsa_44|SIG_ml_dsa_87
+    CMAKE_ARGS ${LIBOQS_BACKEND_ARGS}
+
+    BUILD_BYPRODUCTS "${LIBOQS_LIB}"
+)
+
+# INTERFACE_INCLUDE_DIRECTORIES is validated at configure time; the install
+# tree does not exist yet, so create the include dir up front.
+file(MAKE_DIRECTORY "${LIBOQS_INCLUDE_DIR}")
+
+add_library(oqs STATIC IMPORTED GLOBAL)
+add_dependencies(oqs liboqs_build)
+set_target_properties(oqs PROPERTIES
+    IMPORTED_LOCATION             "${LIBOQS_LIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${LIBOQS_INCLUDE_DIR}"
+)
+
+# -----------------------------------------------------------------------------
 # geryon_core static library (Layer 1).
 # -----------------------------------------------------------------------------
 
@@ -126,8 +208,18 @@ target_include_directories(geryon_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
 )
 target_compile_options(geryon_core PRIVATE ${GERYON_WARNINGS})
-target_link_libraries(geryon_core PRIVATE sodium monocypher)
-add_dependencies(geryon_core libsodium_build)
+# Production interlock (src/core/error.h): PRIVATE so it marks only the shipped
+# library objects, never propagating to test targets that recompile sources
+# with GY_TEST_HOOKS. The two macros together are a hard #error.
+target_compile_definitions(geryon_core PRIVATE GY_PRODUCTION_BUILD)
+# PUBLIC: core's public headers include these deps' headers (hash.h -> sodium.h,
+# mlkem.h/mldsa.h -> oqs/oqs.h), so their include dirs must propagate up the
+# layer chain to any source that transitively includes a core header. Linking is
+# also propagated, which is harmless for static archives (final executables link
+# them anyway). PRIVATE only appeared to work where a system libsodium/liboqs
+# was installed on the compiler's default include path.
+target_link_libraries(geryon_core PUBLIC sodium monocypher oqs)
+add_dependencies(geryon_core libsodium_build liboqs_build)
 
 # -----------------------------------------------------------------------------
 # geryon_kex static library (Layer 2). Includes core/ headers only; ratchet/
@@ -142,6 +234,7 @@ target_include_directories(geryon_kex PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kex"
 )
 target_compile_options(geryon_kex PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_kex PRIVATE GY_PRODUCTION_BUILD)
 target_link_libraries(geryon_kex PUBLIC geryon_core)
 
 # -----------------------------------------------------------------------------
@@ -157,6 +250,7 @@ target_include_directories(geryon_ratchet PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ratchet"
 )
 target_compile_options(geryon_ratchet PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_ratchet PRIVATE GY_PRODUCTION_BUILD)
 target_link_libraries(geryon_ratchet PUBLIC geryon_kex)
 
 # -----------------------------------------------------------------------------
@@ -173,6 +267,7 @@ target_include_directories(geryon_session PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/session"
 )
 target_compile_options(geryon_session PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_session PRIVATE GY_PRODUCTION_BUILD)
 target_link_libraries(geryon_session PUBLIC geryon_ratchet)
 
 # -----------------------------------------------------------------------------
@@ -190,6 +285,7 @@ target_include_directories(geryon_proto PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 target_compile_options(geryon_proto PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_proto PRIVATE GY_PRODUCTION_BUILD)
 target_link_libraries(geryon_proto PUBLIC geryon_session)
 
 # Aggregate: linking `geryon` brings the whole stack and the public header.

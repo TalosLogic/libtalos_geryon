@@ -1,0 +1,52 @@
+(* formal/models/falsify_both_broken.pv
+ *
+ * Falsification model ii (D-FM-5). A HYBRID suite with BOTH
+ * primitives broken: BrokenDH AND BrokenKEM reachable. SK secrecy MUST be
+ * FALSE. This is the attacker-model potency check: it confirms the
+ * attacker wins when it SHOULD - when neither the ECDH nor the ML-KEM
+ * assumption survives - so a `proved` here would mean the model quietly
+ * lost a capability (a silent vacuous pass, the D-FM-5 concern). Consumes
+ * formal/lib/geryon.pvl.
+ *
+ * Contrast with x3dh_secrecy.pv, where EITHER leg alone surviving keeps SK
+ * secret (the §10.1 hybrid claim: secure if EITHER ECDH OR ML-KEM holds).
+ * Here both are broken, so the fusion has nothing left to stand on.
+ *
+ * MODELING: one honest handshake computing SK over the per-pair HDH fusion
+ * (kem_ss fused with an opaque DH, the M4-04/M4-05 convention). The ML-KEM
+ * keypairs are CONCRETE so BrokenKEM (the lib's finite long-term dk leak)
+ * genuinely yields kem_ss via pdec; BrokenDH publishes the DH output.
+ *
+ * Query and expected verdict (see formal/README.md):
+ *   SK secrecy under BrokenDH+BrokenKEM: attacker(secret_sk) : attack
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+letfun hdh_b(kem_ss: bitstring, dh: bitstring) =
+    HASH(comb2(kem_ss, dh)).
+
+free adc: bitstring.
+free secret_sk: bitstring [private].
+
+(* EXPECTED ATTACK: both primitives broken defeats the hybrid fusion. *)
+query attacker(secret_sk).
+
+process
+    let su = su_h25519_512 in
+    new ikb_kem: kempriv; let ike_b  = kempk(ikb_kem) in
+    new spkkem:  kempriv; let spke_b = kempk(spkkem)  in
+    new dh1: bitstring;
+    let (ct_ik:  bitstring, kem_ik:  bitstring) = pqkem_enc(ike_b)  in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spke_b) in
+    let sk = x3dh_sk3(su, hdh_b(kem_spk, dh1),
+                      encodeKEM(kem_ik), encodeKEM(kem_spk)) in
+    let k1 = HKDF(sk, zeros, INFO(su, pu_dr_aead)) in
+    out(pub, (ct_ik, ct_spk));
+    out(pub, aead_enc(k1, adc, secret_sk));
+    (
+        (* BrokenDH: the ratchet/handshake DH output revealed *)
+        ( event BrokenDHev;  out(pub, dh1) )
+        (* BrokenKEM: the long-term ML-KEM dks revealed => kem_ss via pdec *)
+      | ( event BrokenKEMev; out(pub, ikb_kem) )
+      | ( event BrokenKEMev; out(pub, spkkem)  )
+    )

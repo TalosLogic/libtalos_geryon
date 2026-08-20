@@ -16,6 +16,7 @@
 #include "gy_test.h"
 
 static const struct gy_suite_desc *D;
+static const struct gy_suite_desc *DH; /* hybrid suite (h25519_512) */
 
 /* ---- persistent in-memory mock store ----------------------------------- */
 
@@ -237,9 +238,9 @@ seed_session(const uint8_t sid[GY_SESSION_ID_LEN])
     struct gy_keypair ik, ek;
 
     memset(&s, 0, sizeof(s));
-    s.dr.desc = D;
-    s.dr.aead_id = GY_AEAD_CHACHA20POLY1305;
-    ASSERT_EQ(gy_keypair_generate(D, &s.dr.dhs), GY_OK);
+    s.ratchet.base.desc = D;
+    s.ratchet.base.aead_id = GY_AEAD_CHACHA20POLY1305;
+    ASSERT_EQ(gy_keypair_generate(D, &s.ratchet.base.dhs), GY_OK);
     ASSERT_EQ(gy_keypair_generate(D, &ik), GY_OK);
     ASSERT_EQ(gy_keypair_generate(D, &ek), GY_OK);
     ASSERT_EQ(gy_session_id(&s, D, &ik.pub, &ek.pub), GY_OK);
@@ -311,6 +312,67 @@ TEST(key_change_fail_closed)
     load_device(&d);
     ASSERT_TRUE(memcmp(d.ik.pk, ik1.pk, D->curve_pk_len) == 0,
                 "stored key unchanged before accept");
+}
+
+/*
+ * Hybrid full-identity key-change (b-ii-1): a peer that keeps the SAME curve
+ * identity key but swaps its ML-KEM/ML-DSA identity keys is caught as
+ * GY_ERR_KEY_CHANGED (curve-only tracking would have missed this), and nothing
+ * is staged.
+ */
+static void
+make_hik(struct gy_hybrid_identity_public_key *ik)
+{
+    struct gy_hybrid_identity_keypair kp;
+
+    ASSERT_EQ(gy_hybrid_identity_keypair_generate(DH, &kp), GY_OK);
+    *ik = kp.pub;
+}
+
+TEST(hybrid_key_change_pq_only)
+{
+    struct gy_hybrid_identity_public_key hik1, hik2, other;
+    struct gy_hybrid_device_record d;
+    struct gy_key_change chg;
+    uint8_t dk[GY_DEVKEY_LEN];
+    int found;
+
+    mock_reset(&g_mock, &g_store);
+    make_hik(&hik1);
+    make_hik(&other);
+    /* hik2: hik1's curve key, but the PQ identity keys swapped in. */
+    hik2 = hik1;
+    memcpy(hik2.base.mlkem_ek, other.base.mlkem_ek, DH->kem_pk_len);
+    memcpy(hik2.mldsa_pk, other.mldsa_pk, DH->dsa_pk_len);
+
+    STAGE_AND_COMMIT(gy_hybrid_conditional_update(
+        &g_op, DH->suite_id, UID, sizeof(UID), DID, sizeof(DID), &hik1, NULL));
+
+    memset(&chg, 0, sizeof(chg));
+    ASSERT_EQ(gy_op_begin(&g_op, &g_store), GY_OK);
+    ASSERT_EQ(gy_hybrid_conditional_update(&g_op, DH->suite_id, UID,
+                                           sizeof(UID), DID, sizeof(DID), &hik2,
+                                           &chg),
+              GY_ERR_KEY_CHANGED);
+    ASSERT_EQ(gy_op_commit(&g_op), GY_OK); /* nothing staged */
+    ASSERT_EQ(chg.fp_len, DH->hash_len);
+    ASSERT_TRUE(memcmp(chg.old_fp, chg.new_fp, chg.fp_len) != 0,
+                "PQ-key swap changes the fingerprint");
+
+    /* Same full identity re-staged is a no-op (still one device). */
+    STAGE_AND_COMMIT(gy_hybrid_conditional_update(
+        &g_op, DH->suite_id, UID, sizeof(UID), DID, sizeof(DID), &hik1, NULL));
+    ASSERT_EQ(mock_count(&g_mock, GY_REC_DEVICE), 1);
+
+    /* Stored record still carries the original PQ identity. */
+    ASSERT_EQ(gy_devrec_key(UID, sizeof(UID), DID, sizeof(DID), dk), GY_OK);
+    ASSERT_EQ(gy_op_begin(&g_op, &g_store), GY_OK);
+    ASSERT_EQ(gy_op_load_hybrid_device(&g_op, dk, GY_DEVKEY_LEN, &d, &found),
+              GY_OK);
+    gy_op_abort(&g_op);
+    ASSERT_EQ(found, 1);
+    ASSERT_TRUE(memcmp(d.mlkem_ek, hik1.base.mlkem_ek, DH->kem_pk_len) == 0,
+                "stored PQ identity unchanged after rejected swap");
 }
 
 TEST(accept_key_change_replaces)
@@ -616,7 +678,8 @@ main(void)
     if (gy_core_init() != GY_OK)
         return 1;
     D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
+    DH = gy_suite_desc(GY_SUITE_H25519_512);
+    if (D == NULL || DH == NULL)
         return 1;
 
     {
@@ -624,6 +687,7 @@ main(void)
             GY_TEST(conditional_update_tofu),
             GY_TEST(conditional_update_same_key_noop),
             GY_TEST(key_change_fail_closed),
+            GY_TEST(hybrid_key_change_pq_only),
             GY_TEST(accept_key_change_replaces),
             GY_TEST(insert_activate_semantics),
             GY_TEST(expiry_config_validation),

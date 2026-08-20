@@ -7,9 +7,6 @@
 
 #include "double_ratchet.h"
 
-#define GY_INFO_MAX 48
-#define GY_RK_OUT_LEN 96 /* new_rk || ck || nhk, 32 each (D-DR-1) */
-
 #ifdef GY_TEST_HOOKS
 int (*gy_dr_test_keypair)(const struct gy_suite_desc *desc,
                           struct gy_keypair *out);
@@ -30,111 +27,6 @@ gen_ratchet_keypair(const struct gy_suite_desc *desc, struct gy_keypair *out)
         return gy_dr_test_keypair(desc, out);
 #endif
     return gy_keypair_generate(desc, out);
-}
-
-/*
- * KDF_RK (D-DR-1/14): HKDF(salt = rk, IKM = dh, info = INFO("dr.root"),
- * L = 96) -> new_rk || ck || nhk.  Computed via locals so out_rk may alias rk.
- */
-static int
-kdf_rk(const struct gy_suite_desc *desc, const uint8_t *rk, const uint8_t *dh,
-       uint8_t out_rk[32], uint8_t out_ck[32], uint8_t out_nhk[32])
-{
-    uint8_t prk[GY_HASH_MAX];
-    uint8_t okm[GY_RK_OUT_LEN];
-    uint8_t info[GY_INFO_MAX];
-    struct gy_iov iov;
-    size_t infolen;
-    int rc;
-
-    iov.p = dh;
-    iov.len = desc->dh_len;
-
-    rc = desc->hkdf_extract(prk, rk, GY_DR_KEY_LEN, &iov, 1);
-    if (rc != GY_OK)
-        goto out;
-    rc = gy_info(info, sizeof(info), &infolen, desc->suite_id, "dr.root");
-    if (rc != GY_OK)
-        goto out;
-    rc = desc->hkdf_expand(okm, GY_RK_OUT_LEN, prk, info, infolen);
-    if (rc != GY_OK)
-        goto out;
-
-    memcpy(out_rk, okm, 32);
-    memcpy(out_ck, okm + 32, 32);
-    memcpy(out_nhk, okm + 64, 32);
-
-out:
-    gy_secure_zero(prk, sizeof(prk));
-    gy_secure_zero(okm, sizeof(okm));
-    return rc;
-}
-
-/* One symmetric-key ratchet purpose (D-DR-2): single-block KDF-CTR over ck. */
-static int
-kdf_ck_one(const struct gy_suite_desc *desc, const uint8_t ck[32],
-           const char *purpose, uint8_t out[32])
-{
-    uint8_t info[GY_INFO_MAX];
-    size_t infolen;
-    int rc;
-
-    rc = gy_info(info, sizeof(info), &infolen, desc->suite_id, purpose);
-    if (rc != GY_OK)
-        return rc;
-    return gy_kdf_ctr(desc, out, 32, ck, 32, info, infolen, NULL, 0);
-}
-
-/* mk = KDF_CK(ck, dr.msg); ck_next = KDF_CK(ck, dr.chain). */
-static int
-kdf_ck(const struct gy_suite_desc *desc, const uint8_t ck[32], uint8_t mk[32],
-       uint8_t ck_next[32])
-{
-    int rc;
-
-    rc = kdf_ck_one(desc, ck, "dr.msg", mk);
-    if (rc != GY_OK)
-        return rc;
-    return kdf_ck_one(desc, ck, "dr.chain", ck_next);
-}
-
-/*
- * Per-message AEAD key/nonce (D-DR-3): KDF-CTR(mk, Label = INFO("dr.aead"),
- * Context = aead_id || n_be32, L = 32 + nonce_len) split into key || nonce.
- */
-static int
-derive_aead(const struct gy_suite_desc *desc, const uint8_t mk[32],
-            uint8_t aead_id, uint32_t n, uint8_t *key, uint8_t *nonce,
-            size_t *nonce_len)
-{
-    uint8_t info[GY_INFO_MAX];
-    uint8_t ctx[5];
-    uint8_t buf[32 + GY_AEAD_MAX_NONCE];
-    size_t infolen, nl;
-    int rc;
-
-    nl = gy_aead_nonce_len(aead_id);
-    if (nl == 0)
-        return GY_ERR_UNSUPPORTED;
-
-    ctx[0] = aead_id;
-    gy_be32_put(ctx + 1, n);
-
-    rc = gy_info(info, sizeof(info), &infolen, desc->suite_id, "dr.aead");
-    if (rc != GY_OK)
-        return rc;
-    rc =
-        gy_kdf_ctr(desc, buf, 32 + nl, mk, 32, info, infolen, ctx, sizeof(ctx));
-    if (rc != GY_OK) {
-        gy_secure_zero(buf, sizeof(buf));
-        return rc;
-    }
-
-    memcpy(key, buf, 32);
-    memcpy(nonce, buf + 32, nl);
-    *nonce_len = nl;
-    gy_secure_zero(buf, sizeof(buf));
-    return GY_OK;
 }
 
 int
@@ -179,7 +71,8 @@ gy_dr_init_alice(struct gy_dr_state *st, const struct gy_suite_desc *desc,
     rc = desc->dh(dh, st->dhs.sk, st->dhr);
     if (rc != GY_OK)
         goto err;
-    rc = kdf_rk(desc, st->rk, dh, st->rk, st->cks, st->nhks);
+    rc = gy_drc_kdf_rk(desc, st->rk, dh, desc->dh_len, st->rk, st->cks,
+                       st->nhks);
     gy_secure_zero(dh, sizeof(dh));
     if (rc != GY_OK)
         goto err;
@@ -254,7 +147,8 @@ dh_ratchet(struct gy_dr_state *st, const uint8_t *new_rpk, uint32_t remote_pn)
     rc = desc->dh(dh, st->dhs.sk, st->dhr);
     if (rc != GY_OK)
         goto out;
-    rc = kdf_rk(desc, st->rk, dh, st->rk, st->ckr, st->nhkr);
+    rc = gy_drc_kdf_rk(desc, st->rk, dh, desc->dh_len, st->rk, st->ckr,
+                       st->nhkr);
     if (rc != GY_OK)
         goto out;
     st->have_ckr = 1;
@@ -274,7 +168,8 @@ dh_ratchet(struct gy_dr_state *st, const uint8_t *new_rpk, uint32_t remote_pn)
     rc = desc->dh(dh, st->dhs.sk, st->dhr);
     if (rc != GY_OK)
         goto out;
-    rc = kdf_rk(desc, st->rk, dh, st->rk, st->cks, st->nhks);
+    rc = gy_drc_kdf_rk(desc, st->rk, dh, desc->dh_len, st->rk, st->cks,
+                       st->nhks);
     if (rc != GY_OK)
         goto out;
     st->have_cks = 1;
@@ -343,7 +238,7 @@ gy_dr_encrypt(struct gy_dr_state *st, uint8_t *out, size_t cap, size_t *outlen,
     gy_be16_put(out + 2 + GY_HE_SALT_LEN, (uint16_t)ehl);
 
     /* Advance the sending chain (D-DR-2). */
-    rc = kdf_ck(desc, st->cks, mk, ckn);
+    rc = gy_drc_kdf_ck(desc, st->cks, mk, ckn);
     if (rc != GY_OK)
         goto out;
     memcpy(st->cks, ckn, 32);
@@ -356,7 +251,7 @@ gy_dr_encrypt(struct gy_dr_state *st, uint8_t *out, size_t cap, size_t *outlen,
     memcpy(adm + adlen, out + 2, hwlen);
     admlen = adlen + hwlen;
 
-    rc = derive_aead(desc, mk, st->aead_id, n, key, nonce, &nl);
+    rc = gy_drc_derive_aead(desc, mk, st->aead_id, n, key, nonce, &nl);
     if (rc != GY_OK)
         goto out;
 
@@ -373,114 +268,6 @@ out:
     gy_secure_zero(ckn, sizeof(ckn));
     gy_secure_zero(key, sizeof(key));
     gy_secure_zero(nonce, sizeof(nonce));
-    return rc;
-}
-
-/*
- * Drop one reference to epoch slot `ep`; when its last entry is gone the slot
- * is freed and its header key zeroized (D-DR-17).
- */
-static void
-epoch_unref(struct gy_skip_store *s, uint32_t ep)
-{
-    if (s->epochs[ep].refs > 0 && --s->epochs[ep].refs == 0)
-        gy_secure_zero(&s->epochs[ep], sizeof(s->epochs[ep]));
-}
-
-/* Zeroize and drop the entry at idx, keeping [0, count) compacted. */
-static void
-store_remove(struct gy_skip_store *s, size_t idx)
-{
-    epoch_unref(s, s->ent[idx].epoch);
-    gy_secure_zero(&s->ent[idx], sizeof(s->ent[idx]));
-    if (idx + 1 < s->count)
-        memmove(&s->ent[idx], &s->ent[idx + 1],
-                (s->count - idx - 1) * sizeof(s->ent[0]));
-    s->count--;
-    gy_secure_zero(&s->ent[s->count], sizeof(s->ent[s->count]));
-}
-
-/*
- * Find the live epoch slot holding header key hk, or allocate a free one and
- * copy hk in.  A free slot always exists (live epochs <= count < GY_MAX_SKIP at
- * call time).  Returns the slot index.
- */
-static uint32_t
-epoch_intern(struct gy_skip_store *s, const uint8_t hk[32])
-{
-    size_t i, free_slot = GY_MAX_SKIP;
-
-    for (i = 0; i < GY_MAX_SKIP; i++) {
-        if (s->epochs[i].refs == 0) {
-            if (free_slot == GY_MAX_SKIP)
-                free_slot = i;
-        } else if (gy_const_memcmp(s->epochs[i].hk, hk, 32) == 0) {
-            return (uint32_t)i;
-        }
-    }
-    memcpy(s->epochs[free_slot].hk, hk, 32);
-    return (uint32_t)free_slot;
-}
-
-/*
- * Append a skipped key under epoch header key hk, evicting the oldest entry
- * (ent[0]) at capacity so an epoch slot is always free.
- */
-static void
-store_insert(struct gy_skip_store *s, const uint8_t hk[32], uint32_t n,
-             const uint8_t mk[32])
-{
-    struct gy_skipped_key *e;
-    uint32_t ep;
-
-    if (s->count == GY_MAX_SKIP)
-        store_remove(s, 0);
-    ep = epoch_intern(s, hk);
-    e = &s->ent[s->count++];
-    e->epoch = ep;
-    e->n = n;
-    e->age = s->recv_count;
-    memcpy(e->mk, mk, 32);
-    s->epochs[ep].refs++;
-}
-
-/* On a successful decrypt: advance the aging clock and evict aged entries. */
-static void
-store_post_success(struct gy_skip_store *s)
-{
-    size_t i;
-
-    s->recv_count++;
-    i = 0;
-    while (i < s->count) {
-        if (s->recv_count - s->ent[i].age >= GY_SKIP_AGE_LIMIT)
-            store_remove(s, i);
-        else
-            i++;
-    }
-}
-
-/*
- * Advance a receiving chain from *nr to `to` (exclusive), storing each skipped
- * message key under the epoch header key `hk`; leaves ck and *nr at `to`.
- */
-static int
-skip_forward(const struct gy_suite_desc *desc, struct gy_skip_store *store,
-             uint8_t ck[32], uint32_t *nr, uint32_t to, const uint8_t hk[32])
-{
-    uint8_t mk[32], ckn[32];
-    int rc = GY_OK;
-
-    while (*nr < to) {
-        rc = kdf_ck(desc, ck, mk, ckn);
-        if (rc != GY_OK)
-            break;
-        memcpy(ck, ckn, 32);
-        store_insert(store, hk, *nr, mk);
-        (*nr)++;
-    }
-    gy_secure_zero(mk, sizeof(mk));
-    gy_secure_zero(ckn, sizeof(ckn));
     return rc;
 }
 
@@ -568,8 +355,8 @@ gy_dr_decrypt_assoc(struct gy_dr_state *st, uint8_t *out, size_t cap,
         for (i = 0; i < st->skipped.count; i++) {
             if (st->skipped.ent[i].epoch != slot || st->skipped.ent[i].n != h.n)
                 continue;
-            rc = derive_aead(desc, st->skipped.ent[i].mk, st->aead_id, h.n, key,
-                             nonce, &nl);
+            rc = gy_drc_derive_aead(desc, st->skipped.ent[i].mk, st->aead_id,
+                                    h.n, key, nonce, &nl);
             if (rc != GY_OK) {
                 gy_secure_zero(key, sizeof(key));
                 gy_secure_zero(nonce, sizeof(nonce));
@@ -581,8 +368,8 @@ gy_dr_decrypt_assoc(struct gy_dr_state *st, uint8_t *out, size_t cap,
             gy_secure_zero(key, sizeof(key));
             gy_secure_zero(nonce, sizeof(nonce));
             if (rc == GY_OK) {
-                store_remove(&st->skipped, i);
-                store_post_success(&st->skipped);
+                gy_drc_store_remove(&st->skipped, i);
+                gy_drc_store_post_success(&st->skipped);
                 *outlen = ptcap;
                 return GY_OK;
             }
@@ -642,21 +429,21 @@ gy_dr_decrypt_assoc(struct gy_dr_state *st, uint8_t *out, size_t cap,
         }
         /*
          * Finish the outgoing receiving chain (its skipped keys stored under
-         * the pre-step HKr, D-DR-17 task 4), ratchet, then advance the
+         * the pre-step HKr, D-DR-17), ratchet, then advance the
          * new chain (skipped keys under the new HKr).
          */
         if (stage.have_ckr) {
             memcpy(old_hkr, stage.hkr, GY_DR_KEY_LEN);
-            rc = skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr, h.pn,
-                              old_hkr);
+            rc = gy_drc_skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr,
+                                     h.pn, old_hkr);
             if (rc != GY_OK)
                 goto out;
         }
         rc = dh_ratchet(&stage, h.ratchet_pk, h.pn);
         if (rc != GY_OK)
             goto out;
-        rc = skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr, h.n,
-                          stage.hkr);
+        rc = gy_drc_skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr,
+                                 h.n, stage.hkr);
         if (rc != GY_OK)
             goto out;
     } else {
@@ -673,20 +460,20 @@ gy_dr_decrypt_assoc(struct gy_dr_state *st, uint8_t *out, size_t cap,
             rc = GY_ERR_STATE;
             goto out;
         }
-        rc = skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr, h.n,
-                          stage.hkr);
+        rc = gy_drc_skip_forward(desc, &stage.skipped, stage.ckr, &stage.nr,
+                                 h.n, stage.hkr);
         if (rc != GY_OK)
             goto out;
     }
 
     /* Derive the target message key (index h.n) and advance the chain. */
-    rc = kdf_ck(desc, stage.ckr, mk, ckn);
+    rc = gy_drc_kdf_ck(desc, stage.ckr, mk, ckn);
     if (rc != GY_OK)
         goto out;
     memcpy(stage.ckr, ckn, 32);
     stage.nr++;
 
-    rc = derive_aead(desc, mk, stage.aead_id, h.n, key, nonce, &nl);
+    rc = gy_drc_derive_aead(desc, mk, stage.aead_id, h.n, key, nonce, &nl);
     if (rc != GY_OK)
         goto out;
     ptcap = cap;
@@ -696,7 +483,7 @@ gy_dr_decrypt_assoc(struct gy_dr_state *st, uint8_t *out, size_t cap,
         goto out;
 
     /* Tag verified: commit the staged state to the live session (D-DR-4). */
-    store_post_success(&stage.skipped);
+    gy_drc_store_post_success(&stage.skipped);
     *st = stage;
     *outlen = ptcap;
 
@@ -732,14 +519,14 @@ gy_dr_kdf_rk(const struct gy_suite_desc *desc, const uint8_t *rk,
              const uint8_t *dh, uint8_t out_rk[32], uint8_t out_ck[32],
              uint8_t out_nhk[32])
 {
-    return kdf_rk(desc, rk, dh, out_rk, out_ck, out_nhk);
+    return gy_drc_kdf_rk(desc, rk, dh, desc->dh_len, out_rk, out_ck, out_nhk);
 }
 
 int
 gy_dr_kdf_ck(const struct gy_suite_desc *desc, const uint8_t ck[32],
              uint8_t mk[32], uint8_t ck_next[32])
 {
-    return kdf_ck(desc, ck, mk, ck_next);
+    return gy_drc_kdf_ck(desc, ck, mk, ck_next);
 }
 
 int
@@ -747,6 +534,6 @@ gy_dr_derive_aead(const struct gy_suite_desc *desc, const uint8_t mk[32],
                   uint8_t aead_id, uint32_t n, uint8_t *key, uint8_t *nonce,
                   size_t *nonce_len)
 {
-    return derive_aead(desc, mk, aead_id, n, key, nonce, nonce_len);
+    return gy_drc_derive_aead(desc, mk, aead_id, n, key, nonce, nonce_len);
 }
 #endif

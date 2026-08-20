@@ -1,0 +1,153 @@
+(* formal/models/ek_agreement.pv
+ *
+ * STAGE 2, part A: ML-KEM public-key (ek) agreement, the
+ * D-FM-4.5 open RESULT. Consumes formal/lib/geryon.pvl only.
+ *
+ * Claim (D-FM-4.5): if an honest Alice and honest Bob share a session
+ * (Bob decrypts Alice's first message, so same SK), they agree on every
+ * ML-KEM public key used, WITHOUT crediting the KEM's internal ek binding
+ * (the theory is non-binding, D-FM-1). The intended mechanism is the
+ * dual-signed pairing ppair(curve_pk, mlkem_ek) (§5.2): same SK -> same
+ * HDH -> same DH1 -> same SPK curve key -> same paired spke via the
+ * signature. This is where geryon's per-KEM-paired-DH design should beat
+ * PQXDH's lone unsigned KEM prekey (BJKS F4).
+ *
+ * To make the pairing load-bearing, Alice reads Bob's bundle from the
+ * attacker channel: a tampered ek must be rejected by prekey_ok, never
+ * accepted via KEM re-encapsulation. Auth-core handshake (single DH1 +
+ * KEM legs, as agreement.pv); flight 1 only (ek agreement is a handshake
+ * property). Fixed honest Alice and Bob; finite long-term leaks model
+ * BrokenDH/BrokenKEM.
+ *
+ * DECISION FORK (D-FM-4.5): if this query is FALSE (ek disagreement under
+ * same SK with no forgery-enabling compromise), STOP and execute the
+ * BJKS-P2 fallback (hash KEM cts/eks into the KDF), spec-first. Do NOT
+ * weaken the query or credit KEM binding to force it.
+ *
+ * HYBRID_SPEC: §5.2 (signed pairing), §6.1/6.4 (handshake). Register:
+ * D-FM-1, D-FM-4.5.
+ *
+ * Query and expected verdict (see formal/README.md):
+ *   ek agreement: BobEks(n, ek_ik, ek_spk, IK_A, SPK_B) ==>
+ *       AliceEks(n, ek_ik, ek_spk)
+ *       || CompromiseCurve(IK_A) || CompromiseCurve(SPK_B) || BrokenDH
+ *     : proved   (EXPECTED; a FALSE here triggers the fork)
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+table honestIK(point, kempub, mldsapub).
+
+(* Alice records the eks she encapsulated to (from the verified bundle);
+ * Bob records the eks he decapsulated with (his own) plus Alice's IK
+ * curve and his SPK curve, so the query can name the forgery-enabling
+ * compromises precisely. n correlates same-SK sessions (it is Alice's
+ * first-message plaintext, delivered under an SK-derived key). *)
+event AliceEks(bitstring, kempub, kempub).
+event BobEks(bitstring, kempub, kempub, point, point).
+
+(* --- ek agreement (D-FM-4.5) ------------------------------------------- *)
+query n: bitstring, eik: kempub, espk: kempub, xa: point, zs: point;
+    event(BobEks(n, eik, espk, xa, zs)) ==>
+        event(AliceEks(n, eik, espk))
+        || event(CompromiseCurve(xa))
+        || event(CompromiseCurve(zs))
+        || event(BrokenDHev).
+
+(* ====================================================================
+ * Initiator (Alice): reads Bob's bundle from pub, binds the SPK to Bob's
+ * honest identity signature, records the eks used.
+ * ================================================================== *)
+let InitiatorSession(iksk_a: scalar, ikc_a: point, ike_a: kempub,
+                     ikd_a: mldsapub) =
+    in(pub, (ikc_b: point, ike_b: kempub, ikd_b: mldsapub,
+             spkc_b: point, spke_b: kempub, sd: bitstring,
+             ed: bitstring, md: bitstring, iv: interval, ae: aead));
+    get honestIK(=ikc_b, =ike_b, =ikd_b) in
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    let signed_data(ppair(=spkc_b, =spke_b), ts, flags) = sd in
+    if prekey_ok(ikc_b, ikd_b, sd, ctx, ed, md) then
+    let (ct_ik:  bitstring, kem_ik:  bitstring) = pqkem_enc(ike_b) in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spke_b) in
+    let sk = x3dh_sk3(su_h25519_512,
+                      hdh(kem_spk, ecdh(iksk_a, spkc_b)),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc_b, ike_b, ikd_b) in
+    let hf = hflag(iv, ae) in
+    let adf = ad_frst(ha, hb, hf) in
+    let ik_id_b = HASH(encodeEC(ikc_b)) in
+    let spk_id  = HASH(encodeEC(spkc_b)) in
+    let k1 = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    new n: bitstring;
+    event AliceEks(n, ike_b, spke_b);
+    out(pub, (ikc_a, ike_a, ikd_a, ct_ik, ct_spk, ik_id_b, spk_id, hf,
+              aead_enc(k1, adf, n))).
+
+(* ====================================================================
+ * Responder (Bob): fixed keys incl. minted SPK; records his own eks.
+ * ================================================================== *)
+let ResponderSession(iksk: scalar, ikkem: kempriv, ikc: point, ike: kempub,
+                     ikd: mldsapub, spksk: scalar, spkkem: kempriv,
+                     iv: interval, ae: aead) =
+    in(pub, (ikc_a: point, ike_a: kempub, ikd_a: mldsapub,
+             ct_ik: bitstring, ct_spk: bitstring, ik_id_b: bitstring,
+             spk_id_msg: bitstring, hf: bitstring, ct1: bitstring));
+    let my_ik_id = HASH(encodeEC(ikc)) in
+    if ik_id_b = my_ik_id then
+    get honestIK(=ikc_a, =ike_a, =ikd_a) in
+    let hflag(=iv, =ae) = hf in
+    let kem_ik  = pdec(ikkem,  ct_ik)  in
+    let kem_spk = pdec(spkkem, ct_spk) in
+    let sk = x3dh_sk3(su_h25519_512,
+                      hdh(kem_spk, ecdh(spksk, ikc_a)),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc, ike, ikd) in
+    let adf = ad_frst(ha, hb, hf) in
+    let n = aead_dec(HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)), adf, ct1) in
+    (* eks Bob used are his own; xa = Alice IK curve, zs = Bob SPK curve *)
+    event BobEks(n, ike, kempk(spkkem), ikc_a, smul(spksk, gen)).
+
+(* ==================================================================== *)
+process
+    new ika_sk: scalar; new ika_kem: kempriv; new ika_dsa: mldsapriv;
+    let ikc_a = smul(ika_sk, gen) in
+    let ike_a = kempk(ika_kem) in
+    let ikd_a = mldsapk(ika_dsa) in
+    new ikb_sk: scalar; new ikb_kem: kempriv; new ikb_dsa: mldsapriv;
+    let ikc_b = smul(ikb_sk, gen) in
+    let ike_b = kempk(ikb_kem) in
+    let ikd_b = mldsapk(ikb_dsa) in
+    new spksk: scalar; new spkkem: kempriv;
+    new ts: bitstring; new flags: bitstring; new iv: interval;
+    let ae = ae_chacha in
+    let spkc = smul(spksk, gen) in
+    let spke = kempk(spkkem) in
+    let sd  = signed_data(ppair(spkc, spke), ts, flags) in
+    let ed  = xeddsa_sign(ikb_sk, sd) in
+    let md  = mldsa_sign(ikb_dsa, sd, INFO(su_h25519_512, pu_prekey)) in
+    insert honestIK(ikc_a, ike_a, ikd_a);
+    insert honestIK(ikc_b, ike_b, ikd_b);
+    (* iv (refresh interval) is PUBLIC policy (§5.3 signed flags, §6.6 hf);
+     * publishing it lets an honest Alice's bundle input carry Bob's real
+     * interval so the handshake completes and BobEks is REACHABLE - without
+     * this the hflag(=iv,=ae) check on a restricted `new iv` makes the
+     * agreement proof vacuous (BobEks never fires). The proof still holds:
+     * the paired DH, not iv-secrecy, is what defeats the forgery. *)
+    out(pub, iv);
+    out(pub, (ikc_a, ike_a, ikd_a, ikc_b, ike_b, ikd_b, spkc, spke, sd, ed, md));
+    (
+        CompromiseCurveKey(ika_sk) | CompromiseKEMKey(ika_kem)
+      | CompromiseCurveKey(spksk)  | CompromiseKEMKey(spkkem)
+      | !InitiatorSession(ika_sk, ikc_a, ike_a, ikd_a)
+      | !ResponderSession(ikb_sk, ikb_kem, ikc_b, ike_b, ikd_b,
+                          spksk, spkkem, iv, ae)
+      | (event BrokenDHev;  out(pub, ika_sk))
+      | (event BrokenDHev;  out(pub, ikb_sk))
+      | (event BrokenDHev;  out(pub, spksk))
+      | (event BrokenKEMev; out(pub, ika_kem))
+      | (event BrokenKEMev; out(pub, ikb_kem))
+      | (event BrokenKEMev; out(pub, spkkem))
+    )

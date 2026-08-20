@@ -16,13 +16,14 @@ Register conventions and the full index live in [README.md](README.md).
   | Suite | ID byte | KDF suite name |
   |-------|---------|----------------|
   | geryon_c25519 | 0x01 | c25519 |
-  | (reserved) | 0x02 | |
+  | geryon_h25519_512 | 0x02 | h25519_512 |
   | geryon_c448 | 0x03 | c448 |
   | (reserved) | 0x04 | |
 
-  Classical suites take the odd bytes so tier ordering reads from the
-  ID; 0x02 and 0x04 are reserved for future suites. 0x00 is reserved
-  (never a valid suite).
+  Classical suites take the odd bytes and their hybrid counterparts the
+  following even byte, so tier and kind read from the ID; 0x04
+  (geryon_h448_1024) is reserved for the future 448-tier hybrid suite.
+  0x00 is reserved (never a valid suite).
 - **Rationale:** the wire format is versioned from day one (a
   non-negotiable design rule); the version byte is also what makes
   future changes (for example header-encryption details) deployable

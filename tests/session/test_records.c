@@ -15,6 +15,7 @@
 #include "gy_test.h"
 
 static const struct gy_suite_desc *D;
+static const struct gy_suite_desc *DH; /* hybrid suite (h25519_512) */
 #define AEAD GY_AEAD_CHACHA20POLY1305
 
 static void
@@ -76,48 +77,48 @@ build_session(struct gy_session *s)
     struct gy_keypair ik, ek;
 
     memset(s, 0, sizeof(*s));
-    s->dr.desc = D;
-    s->dr.aead_id = AEAD;
-    ASSERT_EQ(gy_keypair_generate(D, &s->dr.dhs), GY_OK);
+    s->ratchet.base.desc = D;
+    s->ratchet.base.aead_id = AEAD;
+    ASSERT_EQ(gy_keypair_generate(D, &s->ratchet.base.dhs), GY_OK);
 
-    memset(s->dr.dhr, 0x88, D->curve_pk_len);
-    memset(s->dr.rk, 0x11, GY_DR_KEY_LEN);
-    memset(s->dr.cks, 0x22, GY_DR_KEY_LEN);
-    memset(s->dr.ckr, 0x33, GY_DR_KEY_LEN);
-    memset(s->dr.hks, 0x44, GY_DR_KEY_LEN);
-    memset(s->dr.hkr, 0x55, GY_DR_KEY_LEN);
-    memset(s->dr.nhks, 0x66, GY_DR_KEY_LEN);
-    memset(s->dr.nhkr, 0x77, GY_DR_KEY_LEN);
-    s->dr.ns = 5;
-    s->dr.nr = 3;
-    s->dr.pn = 2;
-    s->dr.have_dhr = 1;
-    s->dr.have_cks = 1;
-    s->dr.have_ckr = 1;
-    s->dr.have_hks = 1;
-    s->dr.have_hkr = 1;
-    s->dr.have_nhks = 1;
-    s->dr.have_nhkr = 1;
+    memset(s->ratchet.base.dhr, 0x88, D->curve_pk_len);
+    memset(s->ratchet.base.rk, 0x11, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.cks, 0x22, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.ckr, 0x33, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.hks, 0x44, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.hkr, 0x55, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.nhks, 0x66, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.nhkr, 0x77, GY_DR_KEY_LEN);
+    s->ratchet.base.ns = 5;
+    s->ratchet.base.nr = 3;
+    s->ratchet.base.pn = 2;
+    s->ratchet.base.have_dhr = 1;
+    s->ratchet.base.have_cks = 1;
+    s->ratchet.base.have_ckr = 1;
+    s->ratchet.base.have_hks = 1;
+    s->ratchet.base.have_hkr = 1;
+    s->ratchet.base.have_nhks = 1;
+    s->ratchet.base.have_nhkr = 1;
 
     /* Two entries at epoch slot 3, one at slot 7 (refs match). */
-    s->dr.skipped.recv_count = 42;
-    s->dr.skipped.count = 3;
-    s->dr.skipped.ent[0].epoch = 3;
-    s->dr.skipped.ent[0].n = 1;
-    s->dr.skipped.ent[0].age = 10;
-    memset(s->dr.skipped.ent[0].mk, 0xA0, GY_DR_KEY_LEN);
-    s->dr.skipped.ent[1].epoch = 3;
-    s->dr.skipped.ent[1].n = 2;
-    s->dr.skipped.ent[1].age = 11;
-    memset(s->dr.skipped.ent[1].mk, 0xA1, GY_DR_KEY_LEN);
-    s->dr.skipped.ent[2].epoch = 7;
-    s->dr.skipped.ent[2].n = 1;
-    s->dr.skipped.ent[2].age = 12;
-    memset(s->dr.skipped.ent[2].mk, 0xA2, GY_DR_KEY_LEN);
-    s->dr.skipped.epochs[3].refs = 2;
-    memset(s->dr.skipped.epochs[3].hk, 0xE3, GY_DR_KEY_LEN);
-    s->dr.skipped.epochs[7].refs = 1;
-    memset(s->dr.skipped.epochs[7].hk, 0xE7, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.recv_count = 42;
+    s->ratchet.base.skipped.count = 3;
+    s->ratchet.base.skipped.ent[0].epoch = 3;
+    s->ratchet.base.skipped.ent[0].n = 1;
+    s->ratchet.base.skipped.ent[0].age = 10;
+    memset(s->ratchet.base.skipped.ent[0].mk, 0xA0, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.ent[1].epoch = 3;
+    s->ratchet.base.skipped.ent[1].n = 2;
+    s->ratchet.base.skipped.ent[1].age = 11;
+    memset(s->ratchet.base.skipped.ent[1].mk, 0xA1, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.ent[2].epoch = 7;
+    s->ratchet.base.skipped.ent[2].n = 1;
+    s->ratchet.base.skipped.ent[2].age = 12;
+    memset(s->ratchet.base.skipped.ent[2].mk, 0xA2, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.epochs[3].refs = 2;
+    memset(s->ratchet.base.skipped.epochs[3].hk, 0xE3, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.epochs[7].refs = 1;
+    memset(s->ratchet.base.skipped.epochs[7].hk, 0xE7, GY_DR_KEY_LEN);
 
     s->created_at = 0x0102030405060708ull;
     s->activated_at = 0x1122334455667788ull;
@@ -142,7 +143,7 @@ TEST(session_blob_roundtrip)
     ASSERT_TRUE(n < sizeof(buf), "blob within bound");
 
     ASSERT_EQ(gy_session_decode(&s2, buf, n), GY_OK);
-    ASSERT_TRUE(s2.dr.desc == D, "desc re-bound from suite_id");
+    ASSERT_TRUE(s2.ratchet.base.desc == D, "desc re-bound from suite_id");
     ASSERT_TRUE(memcmp(&s, &s2, sizeof(s)) == 0, "session round-trip exact");
 }
 
@@ -173,11 +174,13 @@ TEST(session_free_zeroizes)
     build_session(&s);
     /* Live key material present before teardown (so the check below proves
      * erasure, not absence). */
-    ASSERT_TRUE(gy_is_zero(s.dr.rk, GY_DR_KEY_LEN) == 0, "rk live");
-    ASSERT_TRUE(gy_is_zero(s.dr.skipped.ent[0].mk, GY_DR_KEY_LEN) == 0,
+    ASSERT_TRUE(gy_is_zero(s.ratchet.base.rk, GY_DR_KEY_LEN) == 0, "rk live");
+    ASSERT_TRUE(gy_is_zero(s.ratchet.base.skipped.ent[0].mk, GY_DR_KEY_LEN) ==
+                    0,
                 "skipped mk live");
-    ASSERT_TRUE(gy_is_zero(s.dr.skipped.epochs[3].hk, GY_DR_KEY_LEN) == 0,
-                "epoch hk live");
+    ASSERT_TRUE(
+        gy_is_zero(s.ratchet.base.skipped.epochs[3].hk, GY_DR_KEY_LEN) == 0,
+        "epoch hk live");
 
     gy_session_free(&s);
     ASSERT_EQ(gy_is_zero((const uint8_t *)&s, sizeof(s)), 1);
@@ -378,13 +381,166 @@ TEST(user_blob_roundtrip)
     ASSERT_EQ(gy_user_record_decode(&u2, buf, n), GY_ERR_ARG);
 }
 
+/*
+ * Hand-build a hybrid session (base DR state + all PQ fields, section 7.2/8)
+ * and round-trip it through the blob: the added PQ serialization and the
+ * pq_pending byte must survive exactly (GER-M5-08b task 4).
+ */
+static void
+build_hybrid_session(struct gy_session *s)
+{
+    size_t ek = DH->kem_pk_len, dk = DH->kem_sk_len, ct = DH->kem_ct_len;
+    size_t i;
+
+    memset(s, 0, sizeof(*s));
+    s->ratchet.base.desc = DH;
+    s->ratchet.base.aead_id = AEAD;
+    ASSERT_EQ(gy_keypair_generate(DH, &s->ratchet.base.dhs), GY_OK);
+    memset(s->ratchet.base.dhr, 0x88, DH->curve_pk_len);
+    memset(s->ratchet.base.rk, 0x11, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.cks, 0x22, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.ckr, 0x33, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.hks, 0x44, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.hkr, 0x55, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.nhks, 0x66, GY_DR_KEY_LEN);
+    memset(s->ratchet.base.nhkr, 0x77, GY_DR_KEY_LEN);
+    s->ratchet.base.ns = 4;
+    s->ratchet.base.nr = 2;
+    s->ratchet.base.pn = 1;
+    s->ratchet.base.have_dhr = 1;
+    s->ratchet.base.have_cks = 1;
+    s->ratchet.base.have_ckr = 1;
+    s->ratchet.base.have_hks = 1;
+    s->ratchet.base.have_hkr = 1;
+    s->ratchet.base.have_nhks = 1;
+    s->ratchet.base.have_nhkr = 1;
+    s->ratchet.base.skipped.recv_count = 9;
+    s->ratchet.base.skipped.count = 1;
+    s->ratchet.base.skipped.ent[0].epoch = 2;
+    s->ratchet.base.skipped.ent[0].n = 1;
+    s->ratchet.base.skipped.ent[0].age = 3;
+    memset(s->ratchet.base.skipped.ent[0].mk, 0xA0, GY_DR_KEY_LEN);
+    s->ratchet.base.skipped.epochs[2].refs = 1;
+    memset(s->ratchet.base.skipped.epochs[2].hk, 0xE2, GY_DR_KEY_LEN);
+
+    /* PQ ratchet + confirmation fields. */
+    memset(s->ratchet.mlkem_ek, 0xB0, ek);
+    memset(s->ratchet.mlkem_dk, 0xB1, dk);
+    memset(s->ratchet.remote_ek, 0xB2, ek);
+    memset(s->ratchet.kem_ct, 0xB3, ct);
+    memset(s->ratchet.confirm_ct, 0xB4, ct);
+    memset(s->ratchet.id_mlkem_ek, 0xB5, ek);
+    memset(s->ratchet.id_mlkem_dk, 0xB6, dk);
+    s->ratchet.mlkem_counter = 7;
+    s->ratchet.mlkem_interval = 20;
+    s->ratchet.have_remote_ek = 1;
+    s->ratchet.have_kem_ct = 1;
+    s->ratchet.send_ek_pending = 1;
+    s->ratchet.role = GY_HYBRID_ROLE_RESPONDER;
+    s->ratchet.pq_state = GY_HYBRID_PQ_CONFIRM_SENT;
+    s->ratchet.confirm_pending = 0;
+    s->ratchet.send_confirm_pending = 1;
+    s->ratchet.have_confirm_ct = 1;
+    s->ratchet.have_id_dk = 0;
+
+    /* Session metadata: hybrid base hash + AD_session (2 * hash_len). */
+    s->base_len = (uint8_t)DH->hash_len;
+    for (i = 0; i < DH->hash_len; i++)
+        s->base[i] = (uint8_t)(0xC0 + i);
+    memcpy(s->id, s->base, GY_SESSION_ID_LEN);
+    s->pq_pending = s->ratchet.pq_state;
+    s->ad_len = (uint8_t)(2 * DH->hash_len);
+    for (i = 0; i < s->ad_len; i++)
+        s->ad[i] = (uint8_t)(0xD0 + i);
+    s->created_at = 100;
+    s->activated_at = 200;
+    s->last_recv_at = 300;
+    s->nsend = 4;
+    s->nrecv = 2;
+}
+
+TEST(hybrid_session_blob_roundtrip)
+{
+    struct gy_session s, s2;
+    static uint8_t buf[GY_SESSION_BLOB_MAX];
+    size_t n;
+
+    build_hybrid_session(&s);
+    ASSERT_EQ(gy_session_encode(buf, sizeof(buf), &n, &s), GY_OK);
+    ASSERT_EQ(gy_session_decode(&s2, buf, n), GY_OK);
+    ASSERT_TRUE(s2.ratchet.base.desc == DH, "hybrid desc re-bound");
+    ASSERT_EQ(s2.pq_pending, GY_HYBRID_PQ_CONFIRM_SENT);
+    ASSERT_EQ(s2.ratchet.pq_state, GY_HYBRID_PQ_CONFIRM_SENT);
+    ASSERT_EQ(s2.ratchet.mlkem_interval, 20);
+    ASSERT_TRUE(memcmp(&s, &s2, sizeof(s)) == 0, "hybrid session round-trip");
+}
+
+/*
+ * As session_free_zeroizes, but for a HYBRID session so the PQ secrets in the
+ * embedded ratchet (mlkem_dk, id_mlkem_dk, confirm_ct) are live before free.
+ * gy_session_free is a whole-struct gy_secure_zero today, so the classical scan
+ * already covers the PQ region structurally; this asserts erasure of the PQ
+ * secrets non-vacuously (they are nonzero going in), guarding against a future
+ * field-by-field free that forgets them (GER-M5-10 task 2).
+ */
+TEST(hybrid_session_free_zeroizes)
+{
+    static struct gy_session s;
+    size_t dk = DH->kem_sk_len, ct = DH->kem_ct_len;
+
+    build_hybrid_session(&s);
+    /* The three PQ secret fields are live before teardown (so the whole-struct
+     * scan below proves erasure, not absence). */
+    ASSERT_TRUE(gy_is_zero(s.ratchet.mlkem_dk, dk) == 0, "mlkem_dk live");
+    ASSERT_TRUE(gy_is_zero(s.ratchet.id_mlkem_dk, dk) == 0, "id_mlkem_dk live");
+    ASSERT_TRUE(gy_is_zero(s.ratchet.confirm_ct, ct) == 0, "confirm_ct live");
+
+    gy_session_free(&s);
+    ASSERT_EQ(gy_is_zero((const uint8_t *)&s, sizeof(s)), 1);
+}
+
+/*
+ * Hybrid DeviceRecord round-trip: init from a hybrid identity, add a session,
+ * encode/decode exactly (base + PQ identity), and confirm the classical decoder
+ * rejects the wider blob (format separation).  GER-M5-08b (b-ii-1).
+ */
+TEST(hybrid_device_record_roundtrip)
+{
+    struct gy_hybrid_identity_keypair ik;
+    struct gy_hybrid_device_record d, d2;
+    struct gy_device_record classical;
+    static uint8_t buf[GY_HYBRID_DEVICE_BLOB_MAX];
+    uint8_t fp[GY_HASH_MAX];
+    uint8_t did[3] = {0xDE, 0x71, 0xCE};
+    uint8_t sid[GY_SESSION_ID_LEN], ev[GY_SESSION_ID_LEN];
+    size_t n;
+    int de;
+
+    ASSERT_EQ(gy_hybrid_identity_keypair_generate(DH, &ik), GY_OK);
+    ASSERT_EQ(gy_hybrid_ikhash(DH, &ik.pub, fp), GY_OK);
+    ASSERT_EQ(gy_hybrid_device_record_init(&d, DH->suite_id, did, sizeof(did),
+                                           &ik.pub, fp, DH->hash_len),
+              GY_OK);
+    mkid(sid, 5);
+    ASSERT_EQ(gy_device_session_insert(&d.base, sid, ev, &de), GY_OK);
+
+    ASSERT_EQ(gy_hybrid_device_record_encode(buf, sizeof(buf), &n, &d), GY_OK);
+    ASSERT_TRUE(n < sizeof(buf), "hybrid device blob within bound");
+    ASSERT_EQ(gy_hybrid_device_record_decode(&d2, buf, n), GY_OK);
+    ASSERT_TRUE(memcmp(&d, &d2, sizeof(d)) == 0, "hybrid device round-trip");
+
+    /* The classical decoder must reject the wider blob (trailing PQ bytes). */
+    ASSERT_EQ(gy_device_record_decode(&classical, buf, n), GY_ERR_ARG);
+}
+
 int
 main(void)
 {
     if (gy_core_init() != GY_OK)
         return 1;
     D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
+    DH = gy_suite_desc(GY_SUITE_H25519_512);
+    if (D == NULL || DH == NULL)
         return 1;
 
     {
@@ -392,8 +548,11 @@ main(void)
             GY_TEST(sessionid_determinism),
             GY_TEST(sessionid_cross_suite_rejected),
             GY_TEST(session_blob_roundtrip),
+            GY_TEST(hybrid_session_blob_roundtrip),
+            GY_TEST(hybrid_device_record_roundtrip),
             GY_TEST(session_blob_negatives),
             GY_TEST(session_free_zeroizes),
+            GY_TEST(hybrid_session_free_zeroizes),
             GY_TEST(session_insert_collision),
             GY_TEST(inactive_eviction_order),
             GY_TEST(activate_moves_to_active),

@@ -35,10 +35,30 @@
 #define EXP_MAX_SEND 3
 #define EXP_MAX_RECV 10
 #define EXP_MAX_LATENCY 1
-#define CLIENT_REG_MAX 1024     /* serialized registration upper bound */
-#define CLIENT_BATCH_MAX 8192   /* serialized OPK batch upper bound */
-#define CLIENT_MSG_MAX 2048     /* enveloped message upper bound */
-#define DEMO_FANOUT_MAX 4       /* fan-out descriptors (one peer device here) */
+/*
+ * Serialized-object upper bounds.  These are sized for the LARGER hybrid suite
+ * (geryon_h25519_512): an ML-KEM-512 ek is 800 bytes, an ML-DSA-44 public key
+ * 1312 and its signature 2420, so a hybrid registration/bundle/message runs to
+ * several KB where the classical equivalents are a few hundred bytes.  The demo
+ * uses fixed stack buffers for brevity; a real consumer sizes exactly by the
+ * OpenSSL-style query convention (call with a NULL buffer to learn the length,
+ * then allocate), so it never hardcodes these and is unaffected by the suite.
+ */
+#define CLIENT_REG_MAX 16384   /* serialized registration upper bound */
+#define CLIENT_BATCH_MAX 16384 /* serialized OPK batch upper bound */
+#define CLIENT_MSG_MAX 8192    /* enveloped message upper bound */
+#define CLIENT_BUNDLE_MAX 8192 /* serialized bundle upper bound */
+#define DEMO_FANOUT_MAX 4      /* fan-out descriptors (one peer device here) */
+/*
+ * Continuous ratchet round-trips for the hybrid ML-KEM-refresh illustration.
+ * The library refreshes the Double Ratchet ML-KEM keypair on a fixed interval
+ * (HYBRID_SPEC section 6.6; 20 DH-ratchet steps in this build).  Each round-trip
+ * here is two direction changes, hence two DH-ratchet steps, so 12 round-trips
+ * (24 steps) crosses at least one PERIODIC refresh boundary beyond the refresh
+ * the initial handshake already forces.  The refresh is internal (the consumer
+ * just keeps sending), so this illustrates the path; it asserts only that every
+ * message still round-trips across the boundary. */
+#define DEMO_KEM_REFRESH_ROUNDS 12
 #define CLIENT_INITIATE_RETRY 2 /* bounded send-retry over the initiate path */
 #define CLIENT_POLL_MS 50       /* per-attempt poll timeout (archive pattern) */
 #define CLIENT_POLL_ATTEMPTS                                                   \
@@ -234,7 +254,7 @@ msg_initiate(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd,
     int attempt;
 
     for (attempt = 0; attempt < CLIENT_INITIATE_RETRY; attempt++) {
-        uint8_t bundle[1024], msg[CLIENT_MSG_MAX];
+        uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX];
         size_t blen = sizeof(bundle), mlen = sizeof(msg);
         gy_keychange chg;
         int rc;
@@ -431,6 +451,53 @@ run_initiator(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
     return 0;
 }
 
+/*
+ * Demo: the initiator's PQ-authentication state, as seen by the responder
+ * (gy_pq_pending).  This is the ONE consumer-visible surface that differs
+ * between suites: in a hybrid suite the responder's first reply encapsulates to
+ * the initiator's identity ML-KEM key and mixes that secret into the root KDF,
+ * so the initiator is PQ-PENDING (classical-strength only) until the responder
+ * receives the initiator's first message AFTER that confirmation, at which
+ * point it reads PQ-CONFIRMED (deniable KEM confirmation, no transcript
+ * signature).  The classical suites carry no such state and always report
+ * GY_PQ_NOT_APPLICABLE, so the expected value is suite-gated; the same call runs
+ * in the classical demo and asserts the NOT_APPLICABLE contract.  A consumer
+ * that does not surface PQ-auth state never has to make this call.  Returns 0 on
+ * the expected state, -1 on any error or an unexpected state.
+ */
+static int
+observe_pq_state(gy_custodian *c, const struct client_cfg *cfg, int want)
+{
+    const uint8_t *puid = (const uint8_t *)cfg->peer;
+    const uint8_t *did = (const uint8_t *)peer_did(cfg);
+    int st =
+        gy_pq_pending(c, puid, strlen(cfg->peer), did, strlen(peer_did(cfg)));
+
+    if (st < 0) {
+        fprintf(stderr, "[%s] gy_pq_pending failed (%d)\n", cfg->name, st);
+        return -1;
+    }
+    if (cfg->suite != GY_SUITE_H25519_512) {
+        if (st != GY_PQ_NOT_APPLICABLE) {
+            fprintf(stderr, "[%s] classical suite reported PQ state %d\n",
+                    cfg->name, st);
+            return -1;
+        }
+        return 0;
+    }
+    if (st != want) {
+        fprintf(stderr, "[%s] PQ state %d for %s, expected %d\n", cfg->name, st,
+                cfg->peer, want);
+        return -1;
+    }
+    printf("[%s] PQ auth for %s/%s: %s\n", cfg->name, cfg->peer, peer_did(cfg),
+           want == GY_PQ_PENDING
+               ? "PENDING (classical-strength until the initiator's first "
+                 "post-confirmation message)"
+               : "CONFIRMED (initiator identity is PQ-authenticated)");
+    return 0;
+}
+
 /* Scripted conversation for the responder (Bob). */
 static int
 run_responder(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
@@ -452,6 +519,11 @@ run_responder(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
         return -1;
     printf("[%s] sent b-one\n", cfg->name);
 
+    /* The confirmation has been sent but the initiator has not yet spoken after
+     * it: the initiator is PQ-pending (hybrid) / not-applicable (classical). */
+    if (observe_pq_state(c, cfg, GY_PQ_PENDING) != 0)
+        return -1;
+
     ol = sizeof(out);
     if (msg_receive(c, cfg, rfd, wfd, out, &ol) != 0)
         return -1;
@@ -460,6 +532,11 @@ run_responder(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
         return -1;
     }
     printf("[%s] received a-two\n", cfg->name);
+
+    /* The initiator's first post-confirmation message has now been received:
+     * its identity is PQ-authenticated in a hybrid suite. */
+    if (observe_pq_state(c, cfg, GY_PQ_CONFIRMED) != 0)
+        return -1;
 
     /* All four d-messages arrive, reordered (d1, d3, d2, d4).  Assert each is
      * a valid 2-byte "dN" and all four are distinct (out-of-order recovery). */
@@ -495,7 +572,7 @@ send_reinitiate(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd,
 {
     const uint8_t *puid = (const uint8_t *)cfg->peer;
     size_t pul = strlen(cfg->peer);
-    uint8_t fb[1024], msg[CLIENT_MSG_MAX];
+    uint8_t fb[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX];
     size_t mlen = sizeof(msg);
     int rc;
 
@@ -534,7 +611,7 @@ static int
 run_initiator_lifecycle(gy_custodian *c, const struct client_cfg *cfg, int rfd,
                         int wfd)
 {
-    uint8_t oldb[1024], out[256];
+    uint8_t oldb[CLIENT_BUNDLE_MAX], out[256];
     size_t oldblen = sizeof(oldb), ol;
     int round;
 
@@ -635,7 +712,7 @@ auth_request(const struct client_cfg *cfg, int rfd, int wfd, const uint8_t *msg,
              size_t msg_len, const uint8_t *sig, size_t sig_len)
 {
     struct demo_frame_header hdr;
-    uint8_t payload[512];
+    uint8_t payload[CLIENT_MSG_MAX];
     size_t plen = 0;
 
     if (2 + msg_len + sig_len > sizeof(payload))
@@ -667,7 +744,7 @@ static int
 run_sak_auth(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
 {
     gy_key_handle sak;
-    uint8_t cert[512], sig[128], msg[128];
+    uint8_t cert[8192], sig[4096], msg[128];
     size_t certlen = sizeof(cert), siglen = sizeof(sig), msglen;
     int verdict;
 
@@ -718,7 +795,7 @@ run_sak_auth(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
      * usable for signing and cert export until history evicts it. */
     {
         gy_key_handle sak2;
-        uint8_t cert2[512];
+        uint8_t cert2[8192];
         size_t clen;
 
         if (gy_custodian_rotate_appkey(c, 0, &sak2) != GY_OK) {
@@ -933,10 +1010,9 @@ run_oneshot(const struct client_cfg *cfg, int rfd, int wfd)
         return -1;
     if (filestore_bind(&fs, osdir, &cb) != 0)
         return -1;
-    if (gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                            (const uint8_t *)cfg->cred, strlen(cfg->cred),
-                            (const uint8_t *)cfg->name, strlen(cfg->name),
-                            (const uint8_t *)self_did(cfg),
+    if (gy_custodian_create(&c, cfg->suite, &cb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), (const uint8_t *)cfg->name,
+                            strlen(cfg->name), (const uint8_t *)self_did(cfg),
                             strlen(self_did(cfg)), NULL, NULL, NULL) != GY_OK)
         return -1;
     if (gy_custodian_generate_identity(c, CLIENT_SPK_TS, 2) != GY_OK)
@@ -945,7 +1021,7 @@ run_oneshot(const struct client_cfg *cfg, int rfd, int wfd)
     if (cfg->role == CLIENT_INITIATOR) {
         /* Publisher/receiver: publish a complete one-shot bundle (reserving an
          * OPK), then receive the message the peer initiates from it. */
-        uint8_t bundle[1024], msg[CLIENT_MSG_MAX], out[64];
+        uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX], out[64];
         struct demo_frame_header hdr;
         size_t need = 0, blen, ol = sizeof(out);
 
@@ -984,7 +1060,7 @@ run_oneshot(const struct client_cfg *cfg, int rfd, int wfd)
     } else {
         /* Fetcher/initiator: fetch the peer's one-shot bundle and initiate
          * straight from its bytes, no server-side assembly. */
-        uint8_t bundle[1024], msg[CLIENT_MSG_MAX];
+        uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX];
         struct demo_frame_header hdr;
         size_t blen, mlen = sizeof(msg);
         gy_keychange chg;
@@ -1050,10 +1126,9 @@ run_noopk(const struct client_cfg *cfg, int rfd, int wfd)
         return -1;
     if (filestore_bind(&fs, nodir, &cb) != 0)
         return -1;
-    if (gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                            (const uint8_t *)cfg->cred, strlen(cfg->cred),
-                            (const uint8_t *)cfg->name, strlen(cfg->name),
-                            (const uint8_t *)self_did(cfg),
+    if (gy_custodian_create(&c, cfg->suite, &cb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), (const uint8_t *)cfg->name,
+                            strlen(cfg->name), (const uint8_t *)self_did(cfg),
                             strlen(self_did(cfg)), NULL, NULL, NULL) != GY_OK)
         return -1;
     if (gy_custodian_generate_identity(c, CLIENT_SPK_TS, 2) != GY_OK)
@@ -1098,7 +1173,7 @@ run_noopk(const struct client_cfg *cfg, int rfd, int wfd)
         rc = 0;
     } else {
         /* Initiator: fetch the peer's OPK-less bundle and initiate from it. */
-        uint8_t bundle[1024], msg[CLIENT_MSG_MAX];
+        uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX];
         struct demo_frame_header hdr;
         size_t blen, mlen = sizeof(msg);
         gy_keychange chg;
@@ -1287,7 +1362,7 @@ run_expiration(const struct client_cfg *cfg)
     gy_target tgt;
     gy_keychange chg;
     char sdir[FILESTORE_DIR_MAX], pdir[FILESTORE_DIR_MAX];
-    uint8_t bundle[1024], msg[CLIENT_MSG_MAX], out[64];
+    uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX], out[64];
     uint64_t stick = CLIENT_CLOCK_BASE, ptick = CLIENT_CLOCK_BASE;
     const uint8_t *su = (const uint8_t *)"exp-sender";
     const uint8_t *pu = (const uint8_t *)"exp-peer";
@@ -1308,15 +1383,13 @@ run_expiration(const struct client_cfg *cfg)
         return -1;
 
     /* Both custodians carry the same create-time expiration policy. */
-    if (gy_custodian_create(&s, GY_SUITE_C25519, &scb,
-                            (const uint8_t *)cfg->cred, strlen(cfg->cred), su,
-                            sul, s_did, s_dl, demo_clock, &stick,
-                            &expiry) != GY_OK)
+    if (gy_custodian_create(&s, cfg->suite, &scb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), su, sul, s_did, s_dl, demo_clock,
+                            &stick, &expiry) != GY_OK)
         return -1;
-    if (gy_custodian_create(&p, GY_SUITE_C25519, &pcb,
-                            (const uint8_t *)cfg->cred, strlen(cfg->cred), pu,
-                            pul, p_did, p_dl, demo_clock, &ptick,
-                            &expiry) != GY_OK)
+    if (gy_custodian_create(&p, cfg->suite, &pcb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), pu, pul, p_did, p_dl, demo_clock,
+                            &ptick, &expiry) != GY_OK)
         goto out;
     if (gy_custodian_generate_identity(s, CLIENT_SPK_TS, 2) != GY_OK ||
         gy_custodian_generate_identity(p, CLIENT_SPK_TS, 2) != GY_OK)
@@ -1444,6 +1517,125 @@ out:
     return rc;
 }
 
+/*
+ * Demo (hybrid suites only): a Double Ratchet run that crosses an ML-KEM refresh
+ * boundary.  A hybrid session mixes a fresh ML-KEM secret into the root KDF on
+ * each ratchet step and refreshes its ML-KEM keypair on a fixed interval
+ * (HYBRID_SPEC section 6.6).  This runs a long continuous ping-pong over ONE
+ * session so the periodic refresh fires mid-conversation; from the consumer's
+ * side nothing changes (it just keeps sending), and every message still decrypts
+ * across the boundary.  Isolated in-process throwaway custodians (like
+ * run_expiration), so there is no coordinator traffic and it cannot perturb the
+ * main conversation.  Returns 0 on success, -1 on any failure.
+ */
+static int
+run_kem_refresh(const struct client_cfg *cfg)
+{
+    struct filestore sfs, pfs;
+    gy_store_callbacks scb, pcb;
+    gy_custodian *s = NULL, *p = NULL;
+    char sdir[FILESTORE_DIR_MAX], pdir[FILESTORE_DIR_MAX];
+    uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX], out[64];
+    gy_keychange chg;
+    const uint8_t *su = (const uint8_t *)"kem-sender";
+    const uint8_t *pu = (const uint8_t *)"kem-peer";
+    const uint8_t *s_did = (const uint8_t *)"kem-dev-s";
+    const uint8_t *p_did = (const uint8_t *)"kem-dev-p";
+    size_t sul = strlen("kem-sender"), pul = strlen("kem-peer");
+    size_t s_dl = strlen("kem-dev-s"), p_dl = strlen("kem-dev-p");
+    size_t need = 0, blen, mlen, ol;
+    int rc = -1, round;
+
+    if (snprintf(sdir, sizeof(sdir), "%s-kem-s", cfg->store_dir) >=
+            (int)sizeof(sdir) ||
+        snprintf(pdir, sizeof(pdir), "%s-kem-p", cfg->store_dir) >=
+            (int)sizeof(pdir))
+        return -1;
+    if (filestore_bind(&sfs, sdir, &scb) != 0 ||
+        filestore_bind(&pfs, pdir, &pcb) != 0)
+        return -1;
+
+    if (gy_custodian_create(&s, cfg->suite, &scb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), su, sul, s_did, s_dl, NULL, NULL,
+                            NULL) != GY_OK)
+        return -1;
+    if (gy_custodian_create(&p, cfg->suite, &pcb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), pu, pul, p_did, p_dl, NULL, NULL,
+                            NULL) != GY_OK)
+        goto out;
+    if (gy_custodian_generate_identity(s, CLIENT_SPK_TS, 2) != GY_OK ||
+        gy_custodian_generate_identity(p, CLIENT_SPK_TS, 2) != GY_OK)
+        goto out;
+
+    /* Establish a session: the peer publishes a one-shot bundle, the sender
+     * initiates from it, the peer receives (all in-process). */
+    blen = sizeof(bundle);
+    if (gy_publish_bundle(p, NULL, &need) != GY_OK || need > sizeof(bundle) ||
+        gy_publish_bundle(p, bundle, &blen) != GY_OK)
+        goto out;
+    if (gy_send_open(s) != GY_OK)
+        goto out;
+    memset(&chg, 0, sizeof(chg));
+    mlen = sizeof(msg);
+    if (gy_initiate(s, pu, pul, p_did, p_dl, bundle, blen,
+                    (const uint8_t *)"k0", 2, &chg, msg, &mlen) != GY_OK) {
+        gy_rollback(s);
+        goto out;
+    }
+    if (gy_commit(s) != GY_OK)
+        goto out;
+    ol = sizeof(out);
+    if (gy_receive(p, su, sul, s_did, s_dl, msg, mlen, out, &ol) != GY_OK)
+        goto out;
+
+    /* Alternate single messages each direction.  Each direction change is a DH
+     * ratchet step (a fresh ML-KEM mix), so the loop crosses the refresh
+     * interval; the peer replying first also makes the sender's session ACTIVE
+     * so gy_encrypt applies over the live session on both ends. */
+    for (round = 0; round < DEMO_KEM_REFRESH_ROUNDS; round++) {
+        /* peer -> sender */
+        mlen = sizeof(msg);
+        if (gy_send_open(p) != GY_OK)
+            goto out;
+        if (gy_encrypt(p, su, sul, s_did, s_dl, (const uint8_t *)"pr", 2, msg,
+                       &mlen) != GY_OK) {
+            gy_rollback(p);
+            goto out;
+        }
+        if (gy_commit(p) != GY_OK)
+            goto out;
+        ol = sizeof(out);
+        if (gy_receive(s, pu, pul, p_did, p_dl, msg, mlen, out, &ol) != GY_OK ||
+            ol != 2 || memcmp(out, "pr", 2) != 0)
+            goto out;
+
+        /* sender -> peer */
+        mlen = sizeof(msg);
+        if (gy_send_open(s) != GY_OK)
+            goto out;
+        if (gy_encrypt(s, pu, pul, p_did, p_dl, (const uint8_t *)"sr", 2, msg,
+                       &mlen) != GY_OK) {
+            gy_rollback(s);
+            goto out;
+        }
+        if (gy_commit(s) != GY_OK)
+            goto out;
+        ol = sizeof(out);
+        if (gy_receive(p, su, sul, s_did, s_dl, msg, mlen, out, &ol) != GY_OK ||
+            ol != 2 || memcmp(out, "sr", 2) != 0)
+            goto out;
+    }
+    printf("[%s] hybrid ratchet crossed an ML-KEM refresh boundary over %d "
+           "round-trips; every message decrypted\n",
+           cfg->name, DEMO_KEM_REFRESH_ROUNDS);
+    rc = 0;
+
+out:
+    gy_custodian_close(s);
+    gy_custodian_close(p);
+    return rc;
+}
+
 int
 client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
 {
@@ -1458,11 +1650,11 @@ client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
                 cfg->store_dir);
         return 1;
     }
-    if (gy_custodian_create(
-            &c, GY_SUITE_C25519, &cb, (const uint8_t *)cfg->cred,
-            strlen(cfg->cred), (const uint8_t *)cfg->name, strlen(cfg->name),
-            (const uint8_t *)self_did(cfg), strlen(self_did(cfg)), demo_clock,
-            &tick, NULL) != GY_OK) {
+    if (gy_custodian_create(&c, cfg->suite, &cb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), (const uint8_t *)cfg->name,
+                            strlen(cfg->name), (const uint8_t *)self_did(cfg),
+                            strlen(self_did(cfg)), demo_clock, &tick,
+                            NULL) != GY_OK) {
         fprintf(stderr, "[%s] custodian create failed\n", cfg->name);
         return 1;
     }
@@ -1526,6 +1718,13 @@ client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
      * it neither needs the peer process nor perturbs the main conversation. */
     if (rc == 0 && cfg->role == CLIENT_INITIATOR)
         rc = run_expiration(cfg);
+
+    /* Demo (hybrid suites only): a Double Ratchet run crossing an ML-KEM refresh
+     * boundary.  Isolated and in-process like the expiration phase, and skipped
+     * for classical suites, which carry no ML-KEM refresh. */
+    if (rc == 0 && cfg->role == CLIENT_INITIATOR &&
+        cfg->suite == GY_SUITE_H25519_512)
+        rc = run_kem_refresh(cfg);
 
     /* the example: restart persistence.  The responder hands off to a fresh
      * process: it signals a restart, closes its custodian, and exits WITHOUT a

@@ -48,6 +48,36 @@ gy_opk_generate(const struct gy_suite_desc *desc, struct gy_keypair *out,
     return gy_opk_batch(desc, out, n, existing, n_existing);
 }
 
+int
+gy_hybrid_identity_generate(const struct gy_suite_desc *desc,
+                            struct gy_hybrid_identity_keypair *ik)
+{
+    if (desc == NULL || ik == NULL)
+        return GY_ERR_ARG;
+    return gy_hybrid_identity_keypair_generate(desc, ik);
+}
+
+int
+gy_hybrid_signed_prekey_generate(const struct gy_suite_desc *desc,
+                                 struct gy_hybrid_signed_prekey *spk,
+                                 const struct gy_hybrid_identity_keypair *ik,
+                                 uint64_t timestamp, uint64_t flags)
+{
+    if (desc == NULL || spk == NULL || ik == NULL)
+        return GY_ERR_ARG;
+    return gy_hybrid_spk_create(desc, spk, ik, timestamp, flags);
+}
+
+int
+gy_hybrid_opk_generate(const struct gy_suite_desc *desc,
+                       struct gy_hybrid_keypair *out, size_t n,
+                       const uint32_t *existing, size_t n_existing)
+{
+    if (desc == NULL || out == NULL)
+        return GY_ERR_ARG;
+    return gy_hybrid_opk_batch(desc, out, n, existing, n_existing);
+}
+
 void
 gy_wipe(void *p, size_t n)
 {

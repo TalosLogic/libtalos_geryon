@@ -156,4 +156,31 @@ int gy_session_reinitiate(struct gy_send_ctx *c, const uint8_t *user_id,
                           struct gy_key_change *chg, uint8_t *out,
                           size_t *out_len);
 
+/* ------------------------------------------------------------------------- *
+ * Hybrid initiation (HYBRID_SPEC section 6).  No separate context type: a
+ * hybrid session reuses the classical gy_send_ctx (initialize it with a NULL
+ * local_ik, since the hybrid identity is passed per-call), so the transaction
+ * lifecycle, fan-out, and steady-state gy_send_encrypt (which dispatches on the
+ * loaded session's suite) are all shared.  Only initiation needs the hybrid
+ * identity + ML-KEM refresh policy, supplied as arguments below.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * Start a hybrid session from a fetched (already dual-signature-validated)
+ * hybrid bundle and encrypt the first message (section 6.5 initial message).
+ * c is a gy_send_ctx pinned to the hybrid suite; local_hik is the sender's
+ * hybrid identity key pair; mlkem_interval is the preferred ML-KEM refresh
+ * interval, clamped to the peer SPK's signed advertisement (with the AEAD from
+ * c->aead_id, section 6.6).  Runs gy_hybrid_conditional_update first
+ * (full-identity key-change, GY_ERR_KEY_CHANGED with chg filled on a change),
+ * runs hybrid X3DH, starts the hybrid ratchet, and emits the prefix followed by
+ * the first DR frame.  out == NULL reports the size.
+ */
+int gy_send_initiate_hybrid(
+    struct gy_send_ctx *c, const struct gy_hybrid_identity_keypair *local_hik,
+    uint32_t mlkem_interval, const uint8_t *user_id, size_t user_id_len,
+    const uint8_t *device_id, size_t device_id_len,
+    const struct gy_hybrid_prekey_bundle *bundle, const uint8_t *pt,
+    size_t ptlen, struct gy_key_change *chg, uint8_t *out, size_t *out_len);
+
 #endif /* GY_SEND_H */

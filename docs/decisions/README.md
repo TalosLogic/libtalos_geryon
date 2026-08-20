@@ -3,8 +3,10 @@
 The Signal specifications deliberately leave many choices to the
 implementer. This register records every such point, geryon's
 decision, the rationale, and the validation impact, so the
-implementation never improvises. Decisions recorded here are normative
-for the classical suites and for anything suite-wide.
+implementation never improvises. The per-module files (general, xeddsa,
+x3dh, double_ratchet, sesame, custody) are normative for the classical
+suites and anything suite-wide; the hybrid-suite riders and the PQ/formal
+decisions live in hybrid.md, pq.md, and formal.md.
 
 Entry format: ID, spec reference, what the spec leaves open, geryon's
 decision, rationale, validation impact. Decision IDs are unique
@@ -26,6 +28,9 @@ One file per area, matching the module layout of the source tree:
 | [double_ratchet.md](double_ratchet.md) | D-DR-1..19 | Double Ratchet, Revision 4 (2025-11-04) |
 | [sesame.md](sesame.md) | D-SES-1..12 | Sesame, Revision 2 (2017-04-14) |
 | [custody.md](custody.md) | D-CUST-1 (D-CUST-2+ reserved) | HSM-style key custody over libsodium; extends D-GEN-4 |
+| [hybrid.md](hybrid.md) | hybrid riders on D-X3DH/D-XED/D-SES/D-DR/D-GEN | hybrid-suite additions (HYBRID_SPEC.md companion) |
+| [pq.md](pq.md) | D-PQ-1..4 | ML-KEM/ML-DSA primitives (FIPS 203/204, via liboqs) |
+| [formal.md](formal.md) | D-FM-1..7 | ProVerif symbolic models of the hybrid protocol |
 
 ## Index
 
@@ -93,3 +98,21 @@ algorithm ID; the AD binds version/alg/key-id/type/tier; password
 change vs KEK rotation distinguished). D-CUST-2+ reserved for the
 concrete handle API, backup format, and export/wrap format when they
 are built.
+
+**hybrid.md:** the hybrid-suite riders on the classical decisions,
+grouped by module and keyed to the classical ID they split from (e.g.
+"D-X3DH-4 (hybrid)"): ML-KEM encapsulation per DH and dual prekey
+signatures in X3DH, the ML-KEM ratchet mix and KEM-confirmation state
+in the Double Ratchet, the hybrid SAK and identity encoding, and the
+suite-milestone version policy (D-GEN-9). Normative behavior is in
+HYBRID_SPEC.md.
+
+**pq.md:** D-PQ-1 ML-KEM/ML-DSA parameter selection per tier;
+D-PQ-2 liboqs backend dispatch (DIST vs pure-C `_ref`);
+D-PQ-3 provider integration and error surface; D-PQ-4 PQ timing-harness
+policy (what geryon times vs. what liboqs self-validates).
+
+**formal.md:** D-FM-1 non-binding KEM theory; D-FM-2 attacker classes
+(single model, broken-primitive events); D-FM-3 ratchet bound
+(3 epochs); D-FM-4 query set; D-FM-5 falsification models; D-FM-6
+header-encryption modeling scope; D-FM-7 toolchain pin and CI gate.

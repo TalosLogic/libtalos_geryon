@@ -267,7 +267,12 @@ the full rotation and replenishment lifecycle.
   stores the registration and the OPK pool and assembles a per-fetch bundle
   (IK + SPK + one popped OPK) with the free function `gy_bundle_assemble` (no
   custodian, like `gy_appkey_verify`); the fetcher feeds the result to
-  `gy_initiate`.
+  `gy_initiate`. These server-side free functions (`gy_bundle_assemble`,
+  `gy_opk_batch_count` / `_get`, `gy_registration_identity_pub`,
+  `gy_bundle_fingerprint`) are suite-agnostic: they dispatch on the
+  self-describing suite byte and never deserialize private material, so a hybrid
+  identity uses the same directory path (its registration is bundle-shaped and
+  its OPK entries carry the ML-KEM key; HYBRID_SPEC §5.4).
 - **PKID discovery and deletion:** map a server-reported PKID (a consumed OPK, an
   expired SPK) back to the local key so the application can prune it; delete
   individual or batches of prekeys with zeroization.
@@ -293,7 +298,9 @@ key.
   (bounded history for in-flight tolerance) without touching the identity.
   Certifying the SAK is the same category of act as signing a prekey (the identity
   publishes a key); it is NOT a transcript signature and does not affect messaging
-  deniability.
+  deniability. Because it is the same category as signing a prekey, in a HYBRID
+  suite the SAK follows the prekey rule: dual-scheme (see Scheme below), so no
+  identity-signed artifact drops to classical-only PQ authentication.
 - **Domain-separated signing.** The library frames every SAK signature as
   `sign(SAK, purpose_label || app_context || message)` (D-GEN-3 domain
   separation), so a SAK signature can never be confused with a protocol signature,
@@ -313,7 +320,20 @@ key.
   authored that content, destroying deniability for it. The SAK is domain-separated
   from every protocol key, so messaging deniability (offline, all suites) is fully
   preserved; the SAK is an opt-in capability beside the protocol, not inside it.
-- **Scheme.** The SAK is XEdDSA.
+- **Scheme.** In a classical suite the SAK is XEdDSA. In a hybrid suite the SAK
+  is dual-scheme, exactly mirroring hybrid prekey signing (HYBRID_SPEC): the SAK
+  keypair is an XEdDSA key AND an ML-DSA key, the identity certifies it under
+  BOTH schemes, and per-request signatures carry both; verification requires
+  every signature of each pair to pass (no single-scheme acceptance, no
+  downgrade). The certified data binds both SAK public keys
+  (`curve_type || curve_pk || mldsa_pk`), the identity PKID is the hybrid
+  identity's, and the pinned `identity_pub` a verifier supplies is the full
+  hybrid identity encoding (`curve_type || curve_pk || mlkem_ek || mldsa_pk`,
+  the same bytes the safety-number fingerprint hashes). The SAK keypair carries
+  no ML-KEM component: it signs, it never performs key agreement. The XEdDSA
+  half is framed identically to the classical SAK (a domain-separation label
+  prefix), and the ML-DSA half signs the same bytes under the FIPS 204 context
+  string set to that same label, so the two suites share one canonicalization.
 
 ## 11. Custody design posture
 

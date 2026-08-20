@@ -64,30 +64,50 @@
  * session serializes only its populated portion, so real blobs are far
  * smaller (D-SES-11).
  */
-#define GY_SESSION_BLOB_MAX 90000
+#define GY_SESSION_BLOB_MAX 106000
 #define GY_DEVICE_BLOB_MAX 512
 #define GY_USER_BLOB_MAX 2304
+/*
+ * A hybrid DeviceRecord additionally stores the peer's ML-KEM and ML-DSA
+ * identity keys (section 4.2) for full-identity key-change detection, so its
+ * blob is wider than the classical one.
+ */
+#define GY_HYBRID_DEVICE_BLOB_MAX                                              \
+    (GY_DEVICE_BLOB_MAX + GY_KEM_EK_MAX + GY_DSA_PK_MAX)
 
 /*
- * A session: the Double Ratchet state plus metadata.  `base` is the full
- * suite hash over suite_id || EncodeEC(IK_A) || EncodeEC(EK_A) (base_len =
- * desc->hash_len), retained for base-key dedupe on the receive path
- * (D-SES-6.1); `id` is its first GY_SESSION_ID_LEN bytes (D-SES-3).  The
- * timestamps and counters are the D-SES-7 expiration inputs (populated by
- * later tickets; zero here).  pq_pending is the peer
- * PQ-authentication state, reserved zero.  `ad` is the fixed X3DH
- * associated data (Encode(IK_A) || Encode(IK_B), D-X3DH-6), computed once at
- * handshake and replayed as AD_session into every gy_dr_encrypt/decrypt on
- * this session; ad_len is desc-dependent (<= GY_X3DH_AD_MAX).
+ * Widest stored AD_session across suites.  The hybrid AD_session is IKhash(A) ||
+ * IKhash(B) = 2 * hash_len (128 B at the 448 tier), wider than the classical
+ * EncodeEC pair (GY_X3DH_AD_MAX); size the session AD buffer to cover both.
+ */
+#define GY_SESSION_AD_MAX GY_HYBRID_AD_MAX
+
+/*
+ * A session: the Double Ratchet state plus metadata.  The ratchet is stored as
+ * a gy_hybrid_dr_state for BOTH suite families: a classical session drives the
+ * embedded `ratchet.base` (a gy_dr_state) through the classical engine and
+ * leaves the PQ fields zero; a hybrid session uses the whole struct through the
+ * hybrid engine.  The suite (ratchet.base.desc->is_hybrid) selects the engine.
+ * `base` is the full suite hash over suite_id || EncodeEC(IK_A) ||
+ * EncodeEC(EK_A) (base_len = desc->hash_len), retained for base-key dedupe on
+ * the receive path (D-SES-6.1); `id` is its first GY_SESSION_ID_LEN bytes
+ * (D-SES-3).  The timestamps and counters are the D-SES-7 expiration inputs.
+ * pq_pending is the peer PQ-authentication state (HYBRID_SPEC section 8.4),
+ * mirrored from the hybrid engine and persisted here; classical sessions leave
+ * it zero.  `ad` is the fixed associated data (classical Encode(IK_A) ||
+ * Encode(IK_B), D-X3DH-6; hybrid AD_session = IKhash(A) || IKhash(B), section
+ * 6.7), computed once at handshake and replayed as AD_session into every
+ * encrypt/decrypt on this session; ad_len is desc-dependent and bounded by
+ * GY_SESSION_AD_MAX (the hybrid AD is wider than the classical one).
  */
 struct gy_session {
-    struct gy_dr_state dr;
+    struct gy_hybrid_dr_state ratchet;
     uint8_t id[GY_SESSION_ID_LEN];
     uint8_t base_len;
     uint8_t base[GY_HASH_MAX];
     uint8_t pq_pending;
     uint8_t ad_len;
-    uint8_t ad[GY_X3DH_AD_MAX];
+    uint8_t ad[GY_SESSION_AD_MAX];
     uint64_t created_at;
     uint64_t activated_at;
     uint64_t last_recv_at;
@@ -115,6 +135,20 @@ struct gy_device_record {
     uint8_t inactive[GY_SESSION_INACTIVE_MAX][GY_SESSION_ID_LEN];
     uint8_t stale;
     uint64_t stale_at;
+};
+
+/*
+ * A hybrid peer device record (composition): the classical record plus the
+ * peer's ML-KEM and ML-DSA identity keys (section 4.2).  `base.ik` still holds
+ * the curve identity key and all the session-list/stale machinery operates on
+ * `base` unchanged; the two PQ components ride alongside so key-change detection
+ * (gy_hybrid_conditional_update) can compare the FULL hybrid identity.  Sized to
+ * the GY_KEM_/GY_DSA_ maxima; each suite uses its descriptor lengths.
+ */
+struct gy_hybrid_device_record {
+    struct gy_device_record base;
+    uint8_t mlkem_ek[GY_KEM_EK_MAX];
+    uint8_t mldsa_pk[GY_DSA_PK_MAX];
 };
 
 /*
@@ -218,6 +252,25 @@ int gy_device_record_encode(uint8_t *out, size_t cap, size_t *outlen,
 int gy_device_record_decode(struct gy_device_record *d, const uint8_t *in,
                             size_t len);
 void gy_device_record_free(struct gy_device_record *d);
+
+/*
+ * Hybrid DeviceRecord (composition): the classical record plus the peer's PQ
+ * identity keys.  init copies the curve identity into base and the ML-KEM/ML-DSA
+ * keys alongside; encode/decode round-trip the whole record (base body + PQ);
+ * free zeroizes.  The session-list operations reuse the classical functions on
+ * `&d->base`.  suite_id must name a hybrid suite; encode/decode use its
+ * descriptor lengths.
+ */
+int gy_hybrid_device_record_init(struct gy_hybrid_device_record *d,
+                                 uint8_t suite_id, const uint8_t *device_id,
+                                 size_t device_id_len,
+                                 const struct gy_hybrid_identity_public_key *ik,
+                                 const uint8_t *fingerprint, size_t fp_len);
+int gy_hybrid_device_record_encode(uint8_t *out, size_t cap, size_t *outlen,
+                                   const struct gy_hybrid_device_record *d);
+int gy_hybrid_device_record_decode(struct gy_hybrid_device_record *d,
+                                   const uint8_t *in, size_t len);
+void gy_hybrid_device_record_free(struct gy_hybrid_device_record *d);
 
 /* ---- UserRecord --------------------------------------------------------- */
 

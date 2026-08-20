@@ -14,7 +14,7 @@ set -eu
 
 dir="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../examples" && pwd)}"
 
-allow='geryon\.h|client\.h|coordinator\.h|demo_ipc\.h|demo_proto\.h|filestore\.h'
+allow='geryon\.h|client\.h|coordinator\.h|demo_ipc\.h|demo_proto\.h|filestore\.h|demo_driver\.h'
 
 bad=$(grep -rhoE '#include "[^"]+"' "$dir"/*.c "$dir"/*.h 2>/dev/null |
     sed -e 's/#include "//' -e 's/"$//' |

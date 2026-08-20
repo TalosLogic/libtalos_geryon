@@ -5,9 +5,12 @@ harness. It measures each target function under a fixed-secret class A against
 a random-secret class B; a secret-dependent run time shows up as a large `|t|`.
 Both classes perform identical non-cryptographic setup (see "Target framing"
 below), so the secret VALUE is the only difference the primitive sees.
-geryon requires the timing tests to cover the linked-library primitives, not
-just in-house code, so the X25519, XEdDSA, and AEAD targets exercise the
-libsodium-backed wrappers directly.
+The X25519, XEdDSA, and AEAD targets exercise the libsodium-backed wrappers
+directly. PQ primitives are NOT re-timed here: liboqs validates its own
+ML-KEM/ML-DSA constant-timeness (docs/decisions/pq.md D-PQ-4), so the PQ
+coverage is one target over geryon's OWN composition code, the hybrid X3DH
+responder fusion, where the liboqs decapsulation is common-mode across both
+classes.
 
 This harness links the geryon library, so it is a first-party ISC tool rather
 than external test-oracle tooling; the copyleft carve-out does not apply here.
@@ -59,6 +62,7 @@ Validate one primitive to a clean verdict:
 ./build/tests/timing/geryon_dudect --target kdf_ctr
 ./build/tests/timing/geryon_dudect --target he_tag_reject
 ./build/tests/timing/geryon_dudect --target he_recv_trials
+./build/tests/timing/geryon_dudect --target hybrid_x3dh_resp
 ```
 
 ## Target framing (D-GEN-10)
@@ -89,6 +93,22 @@ measurement artifact. The register entry is authoritative; the rules:
    pays the RNG cost, which perturbs the cache/predictor/frequency state the
    next timer window inherits, and `|t|` partly reflects "did we just call the
    RNG." Applies to `kdf_ctr`, `xeddsa_sign`, `x25519`.
+
+4. **`hybrid_x3dh_resp` is valid-vs-corrupt, and here that is correct.** This
+   is the one PQ target (D-PQ-4): it measures geryon's PQ-first fusion
+   `HDH = HASH(kem_ss || dh)` and the SK/seed-triple KDF inside
+   `gy_hybrid_x3dh_respond`, not the liboqs decapsulation (common-mode: both
+   classes decapsulate one ciphertext). Class A responds to a valid
+   initial-message prefix; class B flips one byte of the unauthenticated
+   `ct_spk` field in that prefix. Unlike the tag-rejection targets, valid-vs-
+   corrupt does NOT become an accept-vs-reject split here: FIPS 203 implicit
+   rejection turns a corrupt ciphertext into a pseudorandom shared secret with
+   no error and no branch, so both classes take the identical `GY_OK` path and
+   any `|t|` is a genuine secret-dependent leak in geryon's fusion/KDF. The
+   responder is stateless (secrets written to caller scratch), so the shared
+   fixture is never mutated. `ct_spk` is the attacker-reachable KEM-oracle
+   surface; the ratchet's KEM ciphertext is AEAD-authenticated and so was
+   deliberately left uncovered (D-PQ-4 amendment).
 
 **Not-gaming litmus.** A framing change is legitimate only if it does not weaken
 the test's power to detect a real key-dependent leak. Rule 3 adds work to the

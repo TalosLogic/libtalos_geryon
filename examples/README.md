@@ -117,7 +117,8 @@ it focused; they are part of the v1.0.0 API and documented in
 
 - `gy_pq_pending` - a peer device's PQ-authentication state. In the classical
   `geryon_c25519` suite this always returns `GY_PQ_NOT_APPLICABLE`, so there is
-  nothing to show here.
+  nothing to show in this binary. The hybrid twin (`geryon_hybrid_demo`, below)
+  does exercise it, watching a peer advance `PENDING -> CONFIRMED`.
 - `gy_custodian_reset` - a destructive wipe of the LOCAL identity (distinct from
   the peer-record `gy_purge_*` shown in phase 9). Omitted so the demo's stores
   stay intact for the restart phase.
@@ -167,6 +168,45 @@ Or run the binary directly to watch the phase-by-phase log:
 ./build/examples/geryon_demo
 ```
 
+## Hybrid suite (`geryon_hybrid_demo`)
+
+The same walkthrough ships a second time as `geryon_hybrid_demo`, pinning the
+post-quantum-hybrid suite `geryon_h25519_512` (X25519 + ML-KEM-512, XEdDSA +
+ML-DSA-44) in place of the classical `geryon_c25519`. This is the whole point of
+the pairing: **a consumer selects the suite once, at `gy_custodian_create`, and
+every call above it is identical.** The two binaries share `demo_driver.c`,
+`client.c`, `coordinator.c`, `filestore.c`, and `demo_ipc.c` byte for byte; they
+differ only in the one enum their thin `main` passes. So the entire lifecycle
+above - directory publish/fetch, one-shot and no-OPK handshakes, the reordered
+ratchet batch, prekey depletion/replenish and SPK rotation, SAK-authenticated
+requests, peer removal, expiration, and restart persistence - runs unchanged
+under hybrid keys, which also makes the hybrid binary a full regression of the
+custody surface under the larger suite.
+
+On top of that it shows the three surfaces the classical suite structurally
+cannot:
+
+- **PQ authentication state** (`gy_pq_pending`): the responder watches the
+  initiator advance `PENDING -> CONFIRMED`. The responder's first reply
+  encapsulates to the initiator's identity ML-KEM key and mixes that secret into
+  the root KDF (a deniable KEM confirmation, never a transcript signature); the
+  initiator stays classical-strength `PENDING` until its first message after that
+  confirmation is received, then reads `CONFIRMED`.
+- **Dual-signed prekey bundle**: a hybrid bundle carries both an XEdDSA and an
+  ML-DSA signature over the signed prekey, and `gy_initiate` verifies *both* or
+  aborts - there is no single-signature acceptance in a hybrid suite. This rides
+  the ordinary fetch/initiate path, so it is exercised by the main conversation.
+- **ML-KEM refresh boundary**: a long in-process ping-pong drives one session
+  past the fixed Double Ratchet ML-KEM refresh interval, so the periodic keypair
+  refresh fires mid-conversation and every message still decrypts across it. The
+  refresh is internal (the consumer just keeps sending), so this illustrates the
+  path rather than asserting on it.
+
+```sh
+ctest --test-dir build -R hybrid_demo   # exit 0 = pass
+./build/examples/geryon_hybrid_demo     # phase-by-phase log
+```
+
 ## Determinism and CI-readiness
 
 The demo is a deterministic pass/fail test: it exits nonzero on any plaintext
@@ -179,10 +219,14 @@ test; actually scheduling that is a later decision.
 
 - **Fail-closed check:** `GERYON_DEMO_FAULT=1 ./build/examples/geryon_demo`
   injects a fault (a corrupted derived safety number in the verification phase,
-  and a plaintext mismatch in messaging) and the demo exits nonzero.
-- **Build hygiene:** the `demo_include_check` CTest asserts the example includes
-  only `geryon.h` and its own headers (never an internal library header). Build
-  with `-DGERYON_SANITIZE=address,undefined` for an ASan/UBSan-clean run.
+  and a plaintext mismatch in messaging) and the demo exits nonzero. The hybrid
+  twin has the same path, wired as the `hybrid_demo_fault` CTest (a `WILL_FAIL`
+  test: the injected fault must make the run exit nonzero).
+- **Build hygiene:** the `demo_include_check` CTest asserts BOTH examples include
+  only `geryon.h` and their own headers (never an internal library header) - one
+  check covers every `examples/` source. Build with
+  `-DGERYON_SANITIZE=address,undefined` for an ASan/UBSan-clean run; both
+  binaries and their CTests join that matrix.
 
 ## Release gate
 

@@ -51,6 +51,43 @@ gy_bundle_assemble(const uint8_t *registration, size_t reg_len,
     if (desc == NULL)
         return GY_ERR_ARG;
 
+    /*
+     * Hybrid suites carry a paired ECDH+ML-KEM OPK (hpub section 4.1), so the
+     * parse, the OPK width, and the emit all use the hybrid codecs.  The
+     * assembled bundle is byte-identical to a full hybrid registration with
+     * its OPK slot filled in; gy_initiate re-validates it.  The OPK-slice
+     * parse mirrors the classical branch below, adding only the mlkem_ek field
+     * that hpub appends after the curve public key.
+     */
+    if (desc->is_hybrid) {
+        struct gy_hybrid_prekey_bundle hb;
+
+        rc = gy_hybrid_bundle_parse(&hb, desc, registration, reg_len);
+        if (rc != GY_OK)
+            return rc;
+        if (hb.opk.curve.pkid != 0)
+            return GY_ERR_ARG; /* already carries an OPK: not a registration */
+
+        if (opk_pub != NULL) {
+            kw = 4 + 1 + desc->curve_pk_len + desc->kem_pk_len;
+            if (opk_len != kw)
+                return GY_ERR_ARG;
+            hb.opk.curve.pkid = get_be32(opk_pub);
+            if (hb.opk.curve.pkid == 0)
+                return GY_ERR_ARG; /* the absent sentinel is not a real PKID */
+            hb.opk.curve.curve_type = opk_pub[4];
+            memcpy(hb.opk.curve.pk, opk_pub + 5, desc->curve_pk_len);
+            memcpy(hb.opk.mlkem_ek, opk_pub + 5 + desc->curve_pk_len,
+                   desc->kem_pk_len);
+        }
+
+        if (out == NULL) {
+            *out_len = gy_hybrid_bundle_wire_len(desc);
+            return GY_OK;
+        }
+        return gy_hybrid_bundle_put(out, *out_len, out_len, desc, &hb);
+    }
+
     rc = gy_bundle_parse(&b, desc, registration, reg_len);
     if (rc != GY_OK)
         return rc;
@@ -81,6 +118,7 @@ gy_registration_identity_pub(const uint8_t *registration, size_t reg_len,
 {
     const struct gy_suite_desc *desc;
     struct gy_prekey_bundle b;
+    struct gy_hybrid_prekey_bundle hb;
     int rc;
 
     if (registration == NULL || ik_pub == NULL || ik_len == NULL)
@@ -91,6 +129,24 @@ gy_registration_identity_pub(const uint8_t *registration, size_t reg_len,
     desc = gy_suite_lookup(registration[1]);
     if (desc == NULL)
         return GY_ERR_ARG;
+
+    /*
+     * Hybrid returns the FULL identity encoding (curve_type || curve_pk ||
+     * mlkem_ek || mldsa_pk), the bytes gy_appkey_verify needs to check both the
+     * XEdDSA and the ML-DSA cert signatures (and the same bytes
+     * gy_hybrid_identity_fingerprint hashes, section 4.2).  On the wire the IK
+     * is pkid(4) || curve_type(1) || curve_pk || mlkem_ek || mldsa_pk, so the
+     * encoding is the contiguous slice just past version(1) || suite(1) ||
+     * pkid(4).  Parse first to reject a malformed/short buffer.
+     */
+    if (desc->is_hybrid) {
+        rc = gy_hybrid_bundle_parse(&hb, desc, registration, reg_len);
+        if (rc != GY_OK)
+            return rc;
+        *ik_pub = registration + 2 + 4;
+        *ik_len = 1 + desc->curve_pk_len + desc->kem_pk_len + desc->dsa_pk_len;
+        return GY_OK;
+    }
 
     /* Parse to validate structure (and reject a malformed/short buffer)
      * before handing back an in-place slice. */
@@ -112,6 +168,7 @@ gy_bundle_fingerprint(const uint8_t *bundle, size_t bundle_len, uint8_t *out,
 {
     const struct gy_suite_desc *desc;
     struct gy_prekey_bundle b;
+    struct gy_hybrid_prekey_bundle hb;
     int rc;
 
     if (bundle == NULL || out_len == NULL)
@@ -125,8 +182,13 @@ gy_bundle_fingerprint(const uint8_t *bundle, size_t bundle_len, uint8_t *out,
 
     /* Parse to validate structure (and reject a malformed/short buffer)
      * before touching the identity key; a published registration and an
-     * assembled bundle share the same wire prefix, so either is accepted. */
-    rc = gy_bundle_parse(&b, desc, bundle, bundle_len);
+     * assembled bundle share the same wire prefix, so either is accepted.  A
+     * hybrid registration is bundle-shaped (section 4.1), so the hybrid
+     * analogue parses it. */
+    if (desc->is_hybrid)
+        rc = gy_hybrid_bundle_parse(&hb, desc, bundle, bundle_len);
+    else
+        rc = gy_bundle_parse(&b, desc, bundle, bundle_len);
     if (rc != GY_OK)
         return rc;
 
@@ -139,15 +201,21 @@ gy_bundle_fingerprint(const uint8_t *bundle, size_t bundle_len, uint8_t *out,
     *out_len = desc->hash_len;
 
     /* Byte-identical to the peer's own gy_self_fingerprint and to
-     * gy_keychange.new_fp for this identity: all three fingerprint the IK
-     * through the same suite primitive. */
+     * gy_keychange.new_fp for this identity: all fingerprint the IK through the
+     * same suite primitive.  Hybrid hashes the complete identity
+     * (curve || mlkem_ek || mldsa_pk, section 4.2), matching the hybrid
+     * gy_self_fingerprint so the safety-number cross-check holds. */
+    if (desc->is_hybrid)
+        return gy_hybrid_identity_fingerprint(desc, out, &hb.ik);
     return gy_proto_fingerprint(desc, out, &b.ik);
 }
 
 /*
  * Validate a published OPK batch header (gy_custodian_publish_opk_batch):
- * version || suite_id || count_be16 || count keys, each key kw bytes
- * (pkid_be32 || curve_type || curve_pk).  Fills *desc, *kw, *count on
+ * version || suite_id || count_be16 || count keys, each key kw bytes.  The
+ * header is identical across suites; only the per-key width differs: a
+ * classical key is pkid_be32 || curve_type || curve_pk, and a hybrid key
+ * (hpub section 4.1) appends the ML-KEM ek.  Fills *desc, *kw, *count on
  * success; a structurally malformed batch is GY_ERR_ARG.
  */
 static int
@@ -165,6 +233,8 @@ opk_batch_dims(const uint8_t *batch, size_t batch_len,
     if (d == NULL)
         return GY_ERR_ARG;
     keyw = 4 + 1 + d->curve_pk_len;
+    if (d->is_hybrid)
+        keyw += d->kem_pk_len;
     n = ((size_t)batch[2] << 8) | (size_t)batch[3];
     if (batch_len != 4 + n * keyw)
         return GY_ERR_ARG;

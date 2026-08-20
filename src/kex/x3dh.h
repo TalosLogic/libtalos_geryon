@@ -102,6 +102,76 @@ int gy_x3dh_respond(const struct gy_suite_desc *desc,
                     const struct gy_x3dh_local *local, const uint8_t *msg,
                     size_t msg_len);
 
+/* ------------------------------------------------------------------------- *
+ * Hybrid X3DH (HYBRID_SPEC section 6).  Extends the classical handshake with a
+ * per-key ML-KEM encapsulation fused into each DH (the section 3.1 PQ-first
+ * combiner), producing the SAME gy_dr_secrets triple the ratchet consumes.
+ * EK is classical-only (section 6.2).  Base-key dedupe (section 6.8) is a
+ * session-layer concern and lives with the store callbacks, not here.
+ * ------------------------------------------------------------------------- */
+
+/* AD_session = IKhash(A) || IKhash(B); AD_first appends hybrid_flag_be32. */
+#define GY_HYBRID_AD_MAX (2 * GY_HASH_MAX + 4)
+
+/* Wire field sizes (section 6.5). */
+#define GY_HYBRID_IK_WIRE                                                      \
+    (4 + 1 + GY_CURVE_PK_MAX + GY_KEM_EK_MAX + GY_DSA_PK_MAX)
+#define GY_HYBRID_EK_WIRE (4 + 1 + GY_CURVE_PK_MAX)
+#define GY_HYBRID_X3DH_PREFIX_MAX                                              \
+    (2 + GY_HYBRID_IK_WIRE + GY_HYBRID_EK_WIRE + 3 * GY_KEM_CT_MAX + 12 + 4)
+
+/*
+ * The responder's local private material for the hybrid handshake.  spk_flags
+ * is the flags value the responder signed into its SPK (section 5.3), needed to
+ * validate the initiator's hybrid_flag (section 6.6).
+ */
+struct gy_hybrid_x3dh_local {
+    const struct gy_hybrid_identity_keypair *ik;
+    const struct gy_hybrid_keypair *spk;
+    uint64_t spk_flags;
+    const struct gy_hybrid_keypair *opks;
+    size_t n_opks;
+};
+
+/*
+ * Hybrid initiator.  Validates peer's bundle FIRST (D-X3DH-14), validates the
+ * chosen hybrid_flag against the SPK's advertised flags, encapsulates to Bob's
+ * IK/SPK/OPK, computes DH1..DH4, fuses each pair (section 6.3), derives the seed
+ * triple (section 6.4) and AD_first (section 6.7), and writes the 4508-byte
+ * initial-message prefix (section 6.5, ending in hybrid_flag; the caller
+ * appends ciphertext_len and the AEAD first message).  ek is the caller's fresh
+ * ephemeral pair; its private key is zeroized on every path.  out_ad has room
+ * for GY_HYBRID_AD_MAX, out_prefix for GY_HYBRID_X3DH_PREFIX_MAX.  Returns
+ * GY_OK, GY_ERR_WEAK_KEY on a degenerate DH, GY_ERR_VERIFY on a bad hybrid_flag,
+ * or the bundle-validation error.
+ */
+int gy_hybrid_x3dh_initiate(const struct gy_suite_desc *desc,
+                            struct gy_dr_secrets *out_secrets, uint8_t *out_ad,
+                            size_t *out_ad_len, uint8_t *out_prefix,
+                            size_t *out_prefix_len,
+                            const struct gy_hybrid_identity_keypair *local_ik,
+                            const struct gy_hybrid_prekey_bundle *peer,
+                            struct gy_keypair *ek, uint32_t hybrid_flag);
+
+/*
+ * Hybrid responder.  Frame-checks, parses the prefix, recomputes the embedded
+ * ik/ek PKIDs, requires ik_id to equal the local identity PKID (constant-time),
+ * selects SPK/OPK by PKID, validates hybrid_flag against spk_flags (section
+ * 6.6), decapsulates (implicit rejection on corrupt ct, no oracle), mirrors the
+ * DHs, and derives the same triple and AD_first.  The parsed hybrid_flag is
+ * returned in *out_hybrid_flag; the consumed OPK in *out_opk_ref (not deleted).
+ * Returns GY_OK, GY_ERR_WEAK_KEY, GY_ERR_ARG on a malformed frame, GY_ERR_STATE
+ * on a cross-suite/stale-identity message, or GY_ERR_VERIFY on a PKID,
+ * prekey-selection, or hybrid_flag failure.
+ */
+int gy_hybrid_x3dh_respond(const struct gy_suite_desc *desc,
+                           struct gy_dr_secrets *out_secrets, uint8_t *out_ad,
+                           size_t *out_ad_len,
+                           struct gy_x3dh_opk_ref *out_opk_ref,
+                           uint32_t *out_hybrid_flag,
+                           const struct gy_hybrid_x3dh_local *local,
+                           const uint8_t *msg, size_t msg_len);
+
 #ifdef GY_TEST_HOOKS
 /*
  * Test-only: the D-DR-13 expansion from a known SK to the seed triple, so a
@@ -109,6 +179,25 @@ int gy_x3dh_respond(const struct gy_suite_desc *desc,
  */
 int gy_x3dh_expand_secrets(const struct gy_suite_desc *desc, const uint8_t *sk,
                            struct gy_dr_secrets *out);
+
+/*
+ * Test-only views of the hybrid X3DH combiner, its downstream KDF, and the
+ * first-message AD (HYBRID_SPEC §3.1/§6.4/§6.7), so a self-KAT can pin the
+ * fusion ordering (HDH = HASH(kem_ss || dh), PQ-first), the SK/seed-triple
+ * derivation (with and without an OPK, nhdh 4 vs 3), and AD_first from fixed
+ * inputs while running no curve or KEM primitive.  Thin wrappers over the
+ * production statics; the byte behavior is identical to the handshake path.
+ */
+int gy_x3dh_hybrid_combine(const struct gy_suite_desc *desc,
+                           const uint8_t *kem_ss, const uint8_t *dh,
+                           uint8_t *hdh);
+int gy_x3dh_hybrid_derive_secrets(const struct gy_suite_desc *desc,
+                                  const uint8_t hdh[][GY_HASH_MAX], size_t nhdh,
+                                  struct gy_dr_secrets *out);
+int gy_x3dh_hybrid_build_ad(const struct gy_suite_desc *desc,
+                            const struct gy_hybrid_identity_public_key *a,
+                            const struct gy_hybrid_identity_public_key *b,
+                            uint32_t hybrid_flag, uint8_t *out, size_t *outlen);
 #endif
 
 #endif /* GY_X3DH_H */

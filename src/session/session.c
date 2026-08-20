@@ -148,9 +148,44 @@ gy_session_id(struct gy_session *s, const struct gy_suite_desc *desc,
 
 /* ---- Double Ratchet state (de)serialization ---------------------------- */
 
+/*
+ * Serialize the hybrid PQ fields (HYBRID_SPEC section 7.2 / 8) after the base.
+ * Written only for hybrid suites; classical sessions carry none.  Alice's
+ * transient identity dk rides along so a mid-confirmation session round-trips
+ * (it is zeroed once confirmation completes).
+ */
 static void
-dr_encode(struct wcur *w, const struct gy_dr_state *dr)
+hybrid_pq_encode(struct wcur *w, const struct gy_hybrid_dr_state *rt)
 {
+    const struct gy_suite_desc *d = rt->base.desc;
+    size_t ek = d->kem_pk_len, dk = d->kem_sk_len, ct = d->kem_ct_len;
+
+    w_raw(w, rt->mlkem_ek, ek);
+    w_raw(w, rt->mlkem_dk, dk);
+    w_raw(w, rt->remote_ek, ek);
+    w_raw(w, rt->kem_ct, ct);
+    w_raw(w, rt->confirm_ct, ct);
+    w_raw(w, rt->id_mlkem_ek, ek);
+    w_raw(w, rt->id_mlkem_dk, dk);
+
+    w_be32(w, rt->mlkem_counter);
+    w_be32(w, rt->mlkem_interval);
+
+    w_u8(w, rt->have_remote_ek);
+    w_u8(w, rt->have_kem_ct);
+    w_u8(w, rt->send_ek_pending);
+    w_u8(w, rt->role);
+    w_u8(w, rt->pq_state);
+    w_u8(w, rt->confirm_pending);
+    w_u8(w, rt->send_confirm_pending);
+    w_u8(w, rt->have_confirm_ct);
+    w_u8(w, rt->have_id_dk);
+}
+
+static void
+dr_encode(struct wcur *w, const struct gy_hybrid_dr_state *rt)
+{
+    const struct gy_dr_state *dr = &rt->base;
     const struct gy_suite_desc *d = dr->desc;
     size_t pk = d->curve_pk_len, sk = d->curve_sk_len;
     size_t i, live = 0;
@@ -205,12 +240,45 @@ dr_encode(struct wcur *w, const struct gy_dr_state *dr)
         w_be32(w, (uint32_t)ep->refs);
         w_raw(w, ep->hk, GY_DR_KEY_LEN);
     }
+
+    if (d->is_hybrid)
+        hybrid_pq_encode(w, rt);
 }
 
-/* Decode into a caller-zeroized dr; validates every count/index in range. */
 static void
-dr_decode(struct rcur *r, struct gy_dr_state *dr, const struct gy_suite_desc *d)
+hybrid_pq_decode(struct rcur *r, struct gy_hybrid_dr_state *rt,
+                 const struct gy_suite_desc *d)
 {
+    size_t ek = d->kem_pk_len, dk = d->kem_sk_len, ct = d->kem_ct_len;
+
+    r_raw(r, rt->mlkem_ek, ek);
+    r_raw(r, rt->mlkem_dk, dk);
+    r_raw(r, rt->remote_ek, ek);
+    r_raw(r, rt->kem_ct, ct);
+    r_raw(r, rt->confirm_ct, ct);
+    r_raw(r, rt->id_mlkem_ek, ek);
+    r_raw(r, rt->id_mlkem_dk, dk);
+
+    rt->mlkem_counter = r_be32(r);
+    rt->mlkem_interval = r_be32(r);
+
+    rt->have_remote_ek = r_u8(r);
+    rt->have_kem_ct = r_u8(r);
+    rt->send_ek_pending = r_u8(r);
+    rt->role = r_u8(r);
+    rt->pq_state = r_u8(r);
+    rt->confirm_pending = r_u8(r);
+    rt->send_confirm_pending = r_u8(r);
+    rt->have_confirm_ct = r_u8(r);
+    rt->have_id_dk = r_u8(r);
+}
+
+/* Decode into a caller-zeroized ratchet; validates every count/index in range. */
+static void
+dr_decode(struct rcur *r, struct gy_hybrid_dr_state *rt,
+          const struct gy_suite_desc *d)
+{
+    struct gy_dr_state *dr = &rt->base;
     size_t pk = d->curve_pk_len, sk = d->curve_sk_len;
     uint32_t count, live, i;
 
@@ -277,6 +345,9 @@ dr_decode(struct rcur *r, struct gy_dr_state *dr, const struct gy_suite_desc *d)
         dr->skipped.epochs[slot].refs = refs;
         r_raw(r, dr->skipped.epochs[slot].hk, GY_DR_KEY_LEN);
     }
+
+    if (d->is_hybrid)
+        hybrid_pq_decode(r, rt, d);
 }
 
 /* ---- SessionRecord ----------------------------------------------------- */
@@ -290,7 +361,7 @@ gy_session_encode(uint8_t *out, size_t cap, size_t *outlen,
 
     if (out == NULL || outlen == NULL || s == NULL)
         return GY_ERR_ARG;
-    d = s->dr.desc;
+    d = s->ratchet.base.desc;
     if (d == NULL)
         return GY_ERR_STATE;
 
@@ -308,7 +379,7 @@ gy_session_encode(uint8_t *out, size_t cap, size_t *outlen,
     w_u8(&w, s->pq_pending);
     w_u8(&w, s->ad_len);
     w_raw(&w, s->ad, s->ad_len);
-    dr_encode(&w, &s->dr);
+    dr_encode(&w, &s->ratchet);
 
     if (!w.ok)
         return GY_ERR_ARG;
@@ -345,12 +416,12 @@ gy_session_decode(struct gy_session *s, const uint8_t *in, size_t len)
     s->nrecv = r_be32(&r);
     s->pq_pending = r_u8(&r);
     s->ad_len = r_u8(&r);
-    if (s->ad_len > GY_X3DH_AD_MAX) {
+    if (s->ad_len > GY_SESSION_AD_MAX) {
         gy_secure_zero(s, sizeof(*s));
         return GY_ERR_ARG;
     }
     r_raw(&r, s->ad, s->ad_len);
-    dr_decode(&r, &s->dr, d);
+    dr_decode(&r, &s->ratchet, d);
 
     if (!r.ok || r.off != len) {
         gy_secure_zero(s, sizeof(*s));
@@ -522,13 +593,74 @@ gy_device_record_init(struct gy_device_record *d, uint8_t suite_id,
     return GY_OK;
 }
 
+/*
+ * DeviceRecord body (everything after the format/suite prefix), shared by the
+ * classical and hybrid encoders so the hybrid record reuses the base layout and
+ * only appends its PQ identity keys.  Range violations set the cursor's ok flag,
+ * caught by the terminal check in each public decoder.
+ */
+static void
+devrec_body_encode(struct wcur *w, const struct gy_device_record *d,
+                   const struct gy_suite_desc *dd)
+{
+    uint32_t i;
+
+    w_u8(w, d->device_id_len);
+    w_raw(w, d->device_id, d->device_id_len);
+    w_be32(w, d->ik.pkid);
+    w_u8(w, d->ik.curve_type);
+    w_raw(w, d->ik.pk, dd->curve_pk_len);
+    w_u8(w, d->fp_len);
+    w_raw(w, d->fingerprint, d->fp_len);
+    w_u8(w, d->has_active);
+    w_raw(w, d->active, GY_SESSION_ID_LEN);
+    w_u8(w, d->stale);
+    w_be64(w, d->stale_at);
+    w_be32(w, d->n_inactive);
+    for (i = 0; i < d->n_inactive; i++)
+        w_raw(w, d->inactive[i], GY_SESSION_ID_LEN);
+}
+
+static void
+devrec_body_decode(struct rcur *r, struct gy_device_record *d,
+                   const struct gy_suite_desc *dd)
+{
+    uint32_t i;
+
+    d->device_id_len = r_u8(r);
+    if (d->device_id_len == 0 || d->device_id_len > GY_DEVICE_ID_MAX) {
+        r->ok = 0;
+        return;
+    }
+    r_raw(r, d->device_id, d->device_id_len);
+    d->ik.pkid = r_be32(r);
+    d->ik.curve_type = r_u8(r);
+    r_raw(r, d->ik.pk, dd->curve_pk_len);
+    d->fp_len = r_u8(r);
+    if (d->fp_len > GY_HASH_MAX) {
+        r->ok = 0;
+        return;
+    }
+    r_raw(r, d->fingerprint, d->fp_len);
+    d->has_active = r_u8(r);
+    r_raw(r, d->active, GY_SESSION_ID_LEN);
+    d->stale = r_u8(r);
+    d->stale_at = r_be64(r);
+    d->n_inactive = r_be32(r);
+    if (d->n_inactive > GY_SESSION_INACTIVE_MAX) {
+        r->ok = 0;
+        return;
+    }
+    for (i = 0; i < d->n_inactive; i++)
+        r_raw(r, d->inactive[i], GY_SESSION_ID_LEN);
+}
+
 int
 gy_device_record_encode(uint8_t *out, size_t cap, size_t *outlen,
                         const struct gy_device_record *d)
 {
     struct wcur w = {out, cap, 0, 1};
     const struct gy_suite_desc *dd;
-    uint32_t i;
 
     if (out == NULL || outlen == NULL || d == NULL)
         return GY_ERR_ARG;
@@ -539,20 +671,7 @@ gy_device_record_encode(uint8_t *out, size_t cap, size_t *outlen,
     w_u8(&w, GY_REC_FMT_V1);
     w_u8(&w, 0);
     w_u8(&w, d->suite_id);
-    w_u8(&w, d->device_id_len);
-    w_raw(&w, d->device_id, d->device_id_len);
-    w_be32(&w, d->ik.pkid);
-    w_u8(&w, d->ik.curve_type);
-    w_raw(&w, d->ik.pk, dd->curve_pk_len);
-    w_u8(&w, d->fp_len);
-    w_raw(&w, d->fingerprint, d->fp_len);
-    w_u8(&w, d->has_active);
-    w_raw(&w, d->active, GY_SESSION_ID_LEN);
-    w_u8(&w, d->stale);
-    w_be64(&w, d->stale_at);
-    w_be32(&w, d->n_inactive);
-    for (i = 0; i < d->n_inactive; i++)
-        w_raw(&w, d->inactive[i], GY_SESSION_ID_LEN);
+    devrec_body_encode(&w, d, dd);
 
     if (!w.ok)
         return GY_ERR_ARG;
@@ -566,7 +685,6 @@ gy_device_record_decode(struct gy_device_record *d, const uint8_t *in,
 {
     struct rcur r = {in, len, 0, 1};
     const struct gy_suite_desc *dd;
-    uint32_t i;
 
     if (d == NULL || in == NULL)
         return GY_ERR_ARG;
@@ -580,28 +698,7 @@ gy_device_record_decode(struct gy_device_record *d, const uint8_t *in,
     dd = gy_suite_desc(d->suite_id);
     if (dd == NULL)
         return GY_ERR_ARG;
-    d->device_id_len = r_u8(&r);
-    if (d->device_id_len == 0 || d->device_id_len > GY_DEVICE_ID_MAX)
-        return GY_ERR_ARG;
-    r_raw(&r, d->device_id, d->device_id_len);
-    d->ik.pkid = r_be32(&r);
-    d->ik.curve_type = r_u8(&r);
-    r_raw(&r, d->ik.pk, dd->curve_pk_len);
-    d->fp_len = r_u8(&r);
-    if (d->fp_len > GY_HASH_MAX)
-        return GY_ERR_ARG;
-    r_raw(&r, d->fingerprint, d->fp_len);
-    d->has_active = r_u8(&r);
-    r_raw(&r, d->active, GY_SESSION_ID_LEN);
-    d->stale = r_u8(&r);
-    d->stale_at = r_be64(&r);
-    d->n_inactive = r_be32(&r);
-    if (d->n_inactive > GY_SESSION_INACTIVE_MAX) {
-        gy_secure_zero(d, sizeof(*d));
-        return GY_ERR_ARG;
-    }
-    for (i = 0; i < d->n_inactive; i++)
-        r_raw(&r, d->inactive[i], GY_SESSION_ID_LEN);
+    devrec_body_decode(&r, d, dd);
 
     if (!r.ok || r.off != len) {
         gy_secure_zero(d, sizeof(*d));
@@ -612,6 +709,92 @@ gy_device_record_decode(struct gy_device_record *d, const uint8_t *in,
 
 void
 gy_device_record_free(struct gy_device_record *d)
+{
+    if (d != NULL)
+        gy_secure_zero(d, sizeof(*d));
+}
+
+int
+gy_hybrid_device_record_init(struct gy_hybrid_device_record *d,
+                             uint8_t suite_id, const uint8_t *device_id,
+                             size_t device_id_len,
+                             const struct gy_hybrid_identity_public_key *ik,
+                             const uint8_t *fingerprint, size_t fp_len)
+{
+    const struct gy_suite_desc *dd = gy_suite_desc(suite_id);
+    int rc;
+
+    if (d == NULL || ik == NULL || dd == NULL || !dd->is_hybrid)
+        return GY_ERR_ARG;
+
+    gy_secure_zero(d, sizeof(*d));
+    rc = gy_device_record_init(&d->base, suite_id, device_id, device_id_len,
+                               &ik->base.curve, fingerprint, fp_len);
+    if (rc != GY_OK)
+        return rc;
+    memcpy(d->mlkem_ek, ik->base.mlkem_ek, dd->kem_pk_len);
+    memcpy(d->mldsa_pk, ik->mldsa_pk, dd->dsa_pk_len);
+    return GY_OK;
+}
+
+int
+gy_hybrid_device_record_encode(uint8_t *out, size_t cap, size_t *outlen,
+                               const struct gy_hybrid_device_record *d)
+{
+    struct wcur w = {out, cap, 0, 1};
+    const struct gy_suite_desc *dd;
+
+    if (out == NULL || outlen == NULL || d == NULL)
+        return GY_ERR_ARG;
+    dd = gy_suite_desc(d->base.suite_id);
+    if (dd == NULL || !dd->is_hybrid)
+        return GY_ERR_STATE;
+
+    w_u8(&w, GY_REC_FMT_V1);
+    w_u8(&w, 0);
+    w_u8(&w, d->base.suite_id);
+    devrec_body_encode(&w, &d->base, dd);
+    w_raw(&w, d->mlkem_ek, dd->kem_pk_len);
+    w_raw(&w, d->mldsa_pk, dd->dsa_pk_len);
+
+    if (!w.ok)
+        return GY_ERR_ARG;
+    *outlen = w.off;
+    return GY_OK;
+}
+
+int
+gy_hybrid_device_record_decode(struct gy_hybrid_device_record *d,
+                               const uint8_t *in, size_t len)
+{
+    struct rcur r = {in, len, 0, 1};
+    const struct gy_suite_desc *dd;
+
+    if (d == NULL || in == NULL)
+        return GY_ERR_ARG;
+    gy_secure_zero(d, sizeof(*d));
+
+    if (r_u8(&r) != GY_REC_FMT_V1)
+        return GY_ERR_ARG;
+    if (r_u8(&r) != 0)
+        return GY_ERR_ARG;
+    d->base.suite_id = r_u8(&r);
+    dd = gy_suite_desc(d->base.suite_id);
+    if (dd == NULL || !dd->is_hybrid)
+        return GY_ERR_ARG;
+    devrec_body_decode(&r, &d->base, dd);
+    r_raw(&r, d->mlkem_ek, dd->kem_pk_len);
+    r_raw(&r, d->mldsa_pk, dd->dsa_pk_len);
+
+    if (!r.ok || r.off != len) {
+        gy_secure_zero(d, sizeof(*d));
+        return GY_ERR_ARG;
+    }
+    return GY_OK;
+}
+
+void
+gy_hybrid_device_record_free(struct gy_hybrid_device_record *d)
 {
     if (d != NULL)
         gy_secure_zero(d, sizeof(*d));

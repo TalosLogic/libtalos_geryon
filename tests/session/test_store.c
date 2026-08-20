@@ -265,9 +265,9 @@ build_session(struct gy_session *s, uint32_t tag)
     struct gy_keypair ik, ek;
 
     memset(s, 0, sizeof(*s));
-    s->dr.desc = D;
-    s->dr.aead_id = GY_AEAD_CHACHA20POLY1305;
-    ASSERT_EQ(gy_keypair_generate(D, &s->dr.dhs), GY_OK);
+    s->ratchet.base.desc = D;
+    s->ratchet.base.aead_id = GY_AEAD_CHACHA20POLY1305;
+    ASSERT_EQ(gy_keypair_generate(D, &s->ratchet.base.dhs), GY_OK);
     ASSERT_EQ(gy_keypair_generate(D, &ik), GY_OK);
     ASSERT_EQ(gy_keypair_generate(D, &ek), GY_OK);
     ASSERT_EQ(gy_session_id(s, D, &ik.pub, &ek.pub), GY_OK);

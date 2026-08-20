@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "dr_common.h"
 #include "header.h"
 #include "he.h"
 #include "x3dh.h"
@@ -23,8 +24,6 @@
  * the (hk, n) skipped re-key and the full HE receive order follow D-DR-17.
  */
 
-#define GY_DR_KEY_LEN 32
-
 /*
  * Header wire unit (D-DR-16): hdr_salt || enc_header_len_be16 || enc_header,
  * where enc_header is the HENCRYPT output (header plaintext + AEAD tag).  The
@@ -34,54 +33,6 @@
 #define GY_DR_ENC_HEADER_MAX (GY_DR_HEADER_MAX + GY_AEAD_MAX_TAG)
 #define GY_DR_HDR_WIRE_MAX (GY_HE_SALT_LEN + 2 + GY_DR_ENC_HEADER_MAX)
 #define GY_DR_AD_MSG_MAX (GY_X3DH_AD_MAX + GY_DR_HDR_WIRE_MAX)
-
-/*
- * Skipped-message-key store bounds (D-DR-4/8).  MAX_SKIP
- * bounds both a single header's key jump and the store capacity; an entry is
- * additionally aged out after GY_SKIP_AGE_LIMIT later successful decryptions.
- */
-#define GY_MAX_SKIP 1000
-#define GY_SKIP_AGE_LIMIT 1000
-
-/*
- * One skipped message key, indexed by (epoch header key, message number) under
- * header encryption (D-DR-17): `epoch` is a slot in the store's
- * epoch table, which holds the receiving header key `hk` that encrypted this
- * message's header.  The nonce is re-derived at use, so only the message key is
- * stored (D-DR-4).  age is the store's decrypt counter at insertion (D-DR-8).
- */
-struct gy_skipped_key {
-    uint32_t epoch;
-    uint32_t n;
-    uint64_t age;
-    uint8_t mk[GY_DR_KEY_LEN];
-};
-
-/*
- * One epoch's header key, shared by every skipped entry from that receiving
- * chain (D-DR-17).  A slot is live while refs > 0 and its hk is zeroized the
- * moment its last entry is consumed or evicted; two live epochs never share an
- * hk.  The table is slotted (never compacted) so `epoch` indices stay stable.
- */
-struct gy_skip_epoch {
-    uint8_t hk[GY_DR_KEY_LEN];
-    size_t refs;
-};
-
-/*
- * Fixed-capacity skipped-key store: entries are kept compacted in [0, count),
- * oldest first, so insertion at capacity evicts ent[0].  Because each live
- * entry holds one epoch ref, the live-epoch count never exceeds `count`, so an
- * epoch table of GY_MAX_SKIP slots always has room (no new capacity constant,
- * D-DR-17).  recv_count counts successful decryptions over the session's life
- * (aging clock).
- */
-struct gy_skip_store {
-    struct gy_skipped_key ent[GY_MAX_SKIP];
-    size_t count;
-    struct gy_skip_epoch epochs[GY_MAX_SKIP];
-    uint64_t recv_count;
-};
 
 /*
  * DR session state (the Double Ratchet specification, section 3.2), sized by the GY_*_MAX

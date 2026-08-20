@@ -1,0 +1,154 @@
+(* formal/models/falsify_unpaired_kem.pv
+ *
+ * Falsification model iii (D-FM-5; validates D-FM-1). The ek
+ * agreement handshake of ek_agreement.pv with the paired DH REMOVED from
+ * each HDH: kem_ss alone feeds the combiner. ProVerif MUST find the BJKS
+ * F4 re-encapsulation attack against ek agreement. Consumes
+ * formal/lib/geryon.pvl.
+ *
+ * WHY THIS FALSIFIES (and what it validates): with the DH leg gone, SK is
+ * a pure function of the KEM shared secrets - and under the non-binding
+ * KEM theory (D-FM-1: penc is a public constructor, ss a fresh name not
+ * bound to the ek) those secrets are ATTACKER-CHOOSABLE. The attacker
+ * therefore impersonates an honest initiator to Bob using only Bob's
+ * PUBLIC prekeys: it picks fresh ss values, crafts ct_ik = penc(ike_b,ss1)
+ * and ct_spk = penc(spke_b,ss2), computes the very SK Bob will derive
+ * (no curve secret is needed anymore), and delivers a first message. Bob
+ * decapsulates to the same secrets, derives the same SK, and fires
+ * BobEks - but no honest AliceEks with that first-message value exists,
+ * and no curve compromise fired. `BobEks ==> AliceEks` is FALSE.
+ *
+ * This is exactly the re-encapsulation capability the non-binding theory
+ * is meant to grant (D-FM-1 validation obligation): if this model instead
+ * PROVED, the lib's KEM encoding would be silently binding and every ek
+ * agreement result would be vacuous. Its mirror ek_agreement.pv - the SAME
+ * model with the DH leg PRESENT - PROVES, so the paired DH is precisely
+ * geryon's defense against F4, and geryon's signed pairing is not even
+ * needed for it (the attack here does not touch Alice's signature; it is
+ * defeated in the real protocol by the DH binding SK to a curve secret the
+ * attacker lacks).
+ *
+ * HYBRID_SPEC: §6.1/6.4 (handshake), §5.2 (pairing, unchanged). Register:
+ * D-FM-1, D-FM-5 (iii). Structure mirrors ek_agreement.pv;
+ * the ONLY change is `hdh(kem_spk, ecdh(..))` -> `encodeKEM(kem_spk)` in
+ * both roles' SK.
+ *
+ * Query and expected verdict (see formal/README.md):
+ *   ek agreement (degraded): BobEks(n, eik, espk, IK_A, SPK_B) ==>
+ *       AliceEks(n, eik, espk) || CompromiseCurve(IK_A)
+ *       || CompromiseCurve(SPK_B) || BrokenDH
+ *     : attack (is false)   -- the F4 re-encapsulation trace
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+table honestIK(point, kempub, mldsapub).
+
+event AliceEks(bitstring, kempub, kempub).
+event BobEks(bitstring, kempub, kempub, point, point).
+
+(* EXPECTED ATTACK: without the paired DH the KEM leg stands alone and the
+ * non-binding theory grants re-encapsulation. *)
+query n: bitstring, eik: kempub, espk: kempub, xa: point, zs: point;
+    event(BobEks(n, eik, espk, xa, zs)) ==>
+        event(AliceEks(n, eik, espk))
+        || event(CompromiseCurve(xa))
+        || event(CompromiseCurve(zs))
+        || event(BrokenDHev).
+
+(* ====================================================================
+ * Initiator (Alice): unchanged from ek_agreement.pv EXCEPT the SK drops
+ * the DH leg (encodeKEM(kem_spk) replaces hdh(kem_spk, ecdh(..))).
+ * ================================================================== *)
+let InitiatorSession(iksk_a: scalar, ikc_a: point, ike_a: kempub,
+                     ikd_a: mldsapub) =
+    in(pub, (ikc_b: point, ike_b: kempub, ikd_b: mldsapub,
+             spkc_b: point, spke_b: kempub, sd: bitstring,
+             ed: bitstring, md: bitstring, iv: interval, ae: aead));
+    get honestIK(=ikc_b, =ike_b, =ikd_b) in
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    let signed_data(ppair(=spkc_b, =spke_b), ts, flags) = sd in
+    if prekey_ok(ikc_b, ikd_b, sd, ctx, ed, md) then
+    let (ct_ik:  bitstring, kem_ik:  bitstring) = pqkem_enc(ike_b) in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spke_b) in
+    (* DH leg REMOVED: kem_ss alone feeds the combiner (the degradation). *)
+    let sk = x3dh_sk3(su_h25519_512,
+                      encodeKEM(kem_spk),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc_b, ike_b, ikd_b) in
+    let hf = hflag(iv, ae) in
+    let adf = ad_frst(ha, hb, hf) in
+    let ik_id_b = HASH(encodeEC(ikc_b)) in
+    let spk_id  = HASH(encodeEC(spkc_b)) in
+    let k1 = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    new n: bitstring;
+    event AliceEks(n, ike_b, spke_b);
+    out(pub, (ikc_a, ike_a, ikd_a, ct_ik, ct_spk, ik_id_b, spk_id, hf,
+              aead_enc(k1, adf, n))).
+
+(* ====================================================================
+ * Responder (Bob): unchanged EXCEPT the SK drops the DH leg to match.
+ * ================================================================== *)
+let ResponderSession(iksk: scalar, ikkem: kempriv, ikc: point, ike: kempub,
+                     ikd: mldsapub, spksk: scalar, spkkem: kempriv,
+                     iv: interval, ae: aead) =
+    in(pub, (ikc_a: point, ike_a: kempub, ikd_a: mldsapub,
+             ct_ik: bitstring, ct_spk: bitstring, ik_id_b: bitstring,
+             spk_id_msg: bitstring, hf: bitstring, ct1: bitstring));
+    let my_ik_id = HASH(encodeEC(ikc)) in
+    if ik_id_b = my_ik_id then
+    get honestIK(=ikc_a, =ike_a, =ikd_a) in
+    let hflag(=iv, =ae) = hf in
+    let kem_ik  = pdec(ikkem,  ct_ik)  in
+    let kem_spk = pdec(spkkem, ct_spk) in
+    let sk = x3dh_sk3(su_h25519_512,
+                      encodeKEM(kem_spk),
+                      encodeKEM(kem_ik),
+                      encodeKEM(kem_spk)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc, ike, ikd) in
+    let adf = ad_frst(ha, hb, hf) in
+    let n = aead_dec(HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)), adf, ct1) in
+    event BobEks(n, ike, kempk(spkkem), ikc_a, smul(spksk, gen)).
+
+(* ==================================================================== *)
+process
+    new ika_sk: scalar; new ika_kem: kempriv; new ika_dsa: mldsapriv;
+    let ikc_a = smul(ika_sk, gen) in
+    let ike_a = kempk(ika_kem) in
+    let ikd_a = mldsapk(ika_dsa) in
+    new ikb_sk: scalar; new ikb_kem: kempriv; new ikb_dsa: mldsapriv;
+    let ikc_b = smul(ikb_sk, gen) in
+    let ike_b = kempk(ikb_kem) in
+    let ikd_b = mldsapk(ikb_dsa) in
+    new spksk: scalar; new spkkem: kempriv;
+    new ts: bitstring; new flags: bitstring; new iv: interval;
+    let ae = ae_chacha in
+    let spkc = smul(spksk, gen) in
+    let spke = kempk(spkkem) in
+    let sd  = signed_data(ppair(spkc, spke), ts, flags) in
+    let ed  = xeddsa_sign(ikb_sk, sd) in
+    let md  = mldsa_sign(ikb_dsa, sd, INFO(su_h25519_512, pu_prekey)) in
+    insert honestIK(ikc_a, ike_a, ikd_a);
+    insert honestIK(ikc_b, ike_b, ikd_b);
+    (* iv (the refresh interval) is PUBLIC policy: signed in the prekey
+     * flags (§5.3) and carried in hf on the wire (§6.6). It must be
+     * attacker-knowable, else a restricted `new iv` would spuriously
+     * authenticate the session via the hflag(=iv,=ae) check and MASK the
+     * F4 attack (the observed is-true before this fix). *)
+    out(pub, iv);
+    out(pub, (ikc_a, ike_a, ikd_a, ikc_b, ike_b, ikd_b, spkc, spke, sd, ed, md));
+    (
+        CompromiseCurveKey(ika_sk) | CompromiseKEMKey(ika_kem)
+      | CompromiseCurveKey(spksk)  | CompromiseKEMKey(spkkem)
+      | !InitiatorSession(ika_sk, ikc_a, ike_a, ikd_a)
+      | !ResponderSession(ikb_sk, ikb_kem, ikc_b, ike_b, ikd_b,
+                          spksk, spkkem, iv, ae)
+      | (event BrokenDHev;  out(pub, ika_sk))
+      | (event BrokenDHev;  out(pub, ikb_sk))
+      | (event BrokenDHev;  out(pub, spksk))
+      | (event BrokenKEMev; out(pub, ika_kem))
+      | (event BrokenKEMev; out(pub, ikb_kem))
+      | (event BrokenKEMev; out(pub, spkkem))
+    )

@@ -294,6 +294,210 @@ gy_opk_batch_parse(struct gy_public_key *out, size_t out_cap, size_t *n,
     return GY_OK;
 }
 
+/* ---- hybrid bundle / OPK batch (HYBRID_SPEC section 4/5) ---------------- */
+
+/* A hybrid public key (section 4.1): pkid || curve_type || curve_pk || mlkem_ek. */
+static void
+put_hpub(uint8_t **p, const struct gy_hybrid_public_key *k, size_t cpl,
+         size_t ekl)
+{
+    put_be32(*p, k->curve.pkid);
+    *p += 4;
+    *(*p)++ = k->curve.curve_type;
+    memcpy(*p, k->curve.pk, cpl);
+    *p += cpl;
+    memcpy(*p, k->mlkem_ek, ekl);
+    *p += ekl;
+}
+
+static void
+get_hpub(const uint8_t **p, struct gy_hybrid_public_key *k, size_t cpl,
+         size_t ekl)
+{
+    memset(k, 0, sizeof(*k));
+    k->curve.pkid = get_be32(*p);
+    *p += 4;
+    k->curve.curve_type = *(*p)++;
+    memcpy(k->curve.pk, *p, cpl);
+    *p += cpl;
+    memcpy(k->mlkem_ek, *p, ekl);
+    *p += ekl;
+}
+
+size_t
+gy_hybrid_bundle_wire_len(const struct gy_suite_desc *desc)
+{
+    size_t cpl = desc->curve_pk_len, ekl = desc->kem_pk_len;
+    size_t hpub = 4 + 1 + cpl + ekl;     /* section 4.1 */
+    size_t ik = hpub + desc->dsa_pk_len; /* section 4.2 */
+    size_t spk = hpub + 4 + 8 + 8 + desc->sig_len + desc->dsa_sig_len; /* 5.1 */
+
+    return 2 + ik + spk + hpub; /* version || suite || IK || SPK || OPK */
+}
+
+int
+gy_hybrid_bundle_put(uint8_t *out, size_t cap, size_t *outlen,
+                     const struct gy_suite_desc *desc,
+                     const struct gy_hybrid_prekey_bundle *b)
+{
+    size_t cpl, ekl, dpl, siglen, dsiglen;
+    uint8_t *p;
+
+    if (out == NULL || outlen == NULL || desc == NULL || b == NULL)
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    cpl = desc->curve_pk_len;
+    ekl = desc->kem_pk_len;
+    dpl = desc->dsa_pk_len;
+    siglen = desc->sig_len;
+    dsiglen = desc->dsa_sig_len;
+    if (cap < gy_hybrid_bundle_wire_len(desc))
+        return GY_ERR_ARG;
+
+    p = out;
+    *p++ = GY_WIRE_VERSION;
+    *p++ = desc->suite_id;
+    put_hpub(&p, &b->ik.base, cpl, ekl); /* IK section 4.2 = 4.1 || mldsa_pk */
+    memcpy(p, b->ik.mldsa_pk, dpl);
+    p += dpl;
+    put_hpub(&p, &b->spk, cpl, ekl); /* SPK section 5.1 */
+    put_be32(p, b->spk_ik_id);
+    p += 4;
+    put_be64(p, b->spk_timestamp);
+    p += 8;
+    put_be64(p, b->spk_flags);
+    p += 8;
+    memcpy(p, b->spk_ed_sig, siglen);
+    p += siglen;
+    memcpy(p, b->spk_mldsa_sig, dsiglen);
+    p += dsiglen;
+    put_hpub(&p, &b->opk, cpl, ekl); /* OPK section 4.1 (zeroed if absent) */
+
+    *outlen = (size_t)(p - out);
+    return GY_OK;
+}
+
+int
+gy_hybrid_bundle_parse(struct gy_hybrid_prekey_bundle *out,
+                       const struct gy_suite_desc *desc, const uint8_t *buf,
+                       size_t len)
+{
+    size_t cpl, ekl, dpl, siglen, dsiglen;
+    const uint8_t *p;
+
+    if (out == NULL || desc == NULL || buf == NULL)
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    if (len != gy_hybrid_bundle_wire_len(desc))
+        return GY_ERR_ARG;
+    if (buf[0] != GY_WIRE_VERSION)
+        return GY_ERR_ARG;
+    if (buf[1] != desc->suite_id)
+        return GY_ERR_STATE;
+
+    cpl = desc->curve_pk_len;
+    ekl = desc->kem_pk_len;
+    dpl = desc->dsa_pk_len;
+    siglen = desc->sig_len;
+    dsiglen = desc->dsa_sig_len;
+
+    memset(out, 0, sizeof(*out));
+    p = buf + 2;
+    get_hpub(&p, &out->ik.base, cpl, ekl);
+    memcpy(out->ik.mldsa_pk, p, dpl);
+    p += dpl;
+    get_hpub(&p, &out->spk, cpl, ekl);
+    out->spk_ik_id = get_be32(p);
+    p += 4;
+    out->spk_timestamp = get_be64(p);
+    p += 8;
+    out->spk_flags = get_be64(p);
+    p += 8;
+    memcpy(out->spk_ed_sig, p, siglen);
+    p += siglen;
+    memcpy(out->spk_mldsa_sig, p, dsiglen);
+    p += dsiglen;
+    get_hpub(&p, &out->opk, cpl, ekl);
+    return GY_OK;
+}
+
+size_t
+gy_hybrid_opk_batch_wire_len(const struct gy_suite_desc *desc, size_t n)
+{
+    size_t hpub = 4 + 1 + desc->curve_pk_len + desc->kem_pk_len;
+
+    return 2 + 2 + n * hpub;
+}
+
+int
+gy_hybrid_opk_batch_put(uint8_t *out, size_t cap, size_t *outlen,
+                        const struct gy_suite_desc *desc,
+                        const struct gy_hybrid_public_key *keys, size_t n)
+{
+    size_t cpl, ekl, i;
+    uint8_t *p;
+
+    if (out == NULL || outlen == NULL || desc == NULL || (keys == NULL && n))
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    if (n > 0xFFFF)
+        return GY_ERR_TOOLONG;
+    if (cap < gy_hybrid_opk_batch_wire_len(desc, n))
+        return GY_ERR_ARG;
+    cpl = desc->curve_pk_len;
+    ekl = desc->kem_pk_len;
+
+    p = out;
+    *p++ = GY_WIRE_VERSION;
+    *p++ = desc->suite_id;
+    p[0] = (uint8_t)(n >> 8);
+    p[1] = (uint8_t)n;
+    p += 2;
+    for (i = 0; i < n; i++)
+        put_hpub(&p, &keys[i], cpl, ekl);
+
+    *outlen = (size_t)(p - out);
+    return GY_OK;
+}
+
+int
+gy_hybrid_opk_batch_parse(struct gy_hybrid_public_key *out, size_t out_cap,
+                          size_t *n, const struct gy_suite_desc *desc,
+                          const uint8_t *buf, size_t len)
+{
+    size_t cpl, ekl, hpub, count, i;
+    const uint8_t *p;
+
+    if (out == NULL || n == NULL || desc == NULL || buf == NULL)
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    if (len < 4)
+        return GY_ERR_ARG;
+    if (buf[0] != GY_WIRE_VERSION)
+        return GY_ERR_ARG;
+    if (buf[1] != desc->suite_id)
+        return GY_ERR_STATE;
+
+    cpl = desc->curve_pk_len;
+    ekl = desc->kem_pk_len;
+    hpub = 4 + 1 + cpl + ekl;
+    count = ((size_t)buf[2] << 8) | (size_t)buf[3];
+    if (count > out_cap)
+        return GY_ERR_TOOLONG;
+    if (len != 4 + count * hpub)
+        return GY_ERR_ARG;
+
+    p = buf + 4;
+    for (i = 0; i < count; i++)
+        get_hpub(&p, &out[i], cpl, ekl);
+    *n = count;
+    return GY_OK;
+}
+
 /* ---- application signing key certificate wire format ----- */
 
 size_t
@@ -372,6 +576,123 @@ gy_appkey_cert_parse(const struct gy_suite_desc *desc, const uint8_t *buf,
     *identity_pkid = get_be32(p);
     p += 4;
     memcpy(identity_sig, p, siglen);
+
+    return GY_OK;
+}
+
+/* ---- hybrid application signing key certificate wire format --------------
+ *
+ * Dual-scheme SAK cert: the SAK public key carries BOTH a curve (XEdDSA) key
+ * and an ML-DSA key, and the identity certifies it with BOTH an XEdDSA and an
+ * ML-DSA signature (verify requires both).  Layout:
+ *   version || suite || EncodeEC(sak_curve_pub) || sak_mldsa_pk ||
+ *   issued_at_be64 || expiry_be64 || identity_pkid_be32 ||
+ *   identity_ed_sig || identity_mldsa_sig
+ * As with gy_appkey_cert_put, this file only frames bytes; gy_appkey_verify
+ * checks the two signatures (over the domain-separated signed data, NOT these
+ * raw wire bytes). */
+
+size_t
+gy_hybrid_appkey_cert_wire_len(const struct gy_suite_desc *desc)
+{
+    size_t kw = 4 + 1 + desc->curve_pk_len;
+
+    return 1 + 1 + kw + desc->dsa_pk_len + 8 + 8 + 4 + desc->sig_len +
+           desc->dsa_sig_len;
+}
+
+int
+gy_hybrid_appkey_cert_put(uint8_t *out, size_t cap, size_t *outlen,
+                          const struct gy_suite_desc *desc,
+                          const struct gy_public_key *sak_curve_pub,
+                          const uint8_t *sak_mldsa_pk, uint64_t issued_at,
+                          uint64_t expiry, uint32_t identity_pkid,
+                          const uint8_t *identity_ed_sig,
+                          const uint8_t *identity_mldsa_sig)
+{
+    size_t cpl, dpl, siglen, dsiglen, need;
+    uint8_t *p;
+
+    if (out == NULL || outlen == NULL || desc == NULL ||
+        sak_curve_pub == NULL || sak_mldsa_pk == NULL ||
+        identity_ed_sig == NULL || identity_mldsa_sig == NULL)
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    cpl = desc->curve_pk_len;
+    dpl = desc->dsa_pk_len;
+    siglen = desc->sig_len;
+    dsiglen = desc->dsa_sig_len;
+    need = gy_hybrid_appkey_cert_wire_len(desc);
+    if (cap < need)
+        return GY_ERR_ARG;
+
+    p = out;
+    *p++ = GY_WIRE_VERSION;
+    *p++ = desc->suite_id;
+    put_key(&p, sak_curve_pub, cpl);
+    memcpy(p, sak_mldsa_pk, dpl);
+    p += dpl;
+    put_be64(p, issued_at);
+    p += 8;
+    put_be64(p, expiry);
+    p += 8;
+    put_be32(p, identity_pkid);
+    p += 4;
+    memcpy(p, identity_ed_sig, siglen);
+    p += siglen;
+    memcpy(p, identity_mldsa_sig, dsiglen);
+    p += dsiglen;
+
+    *outlen = (size_t)(p - out);
+    return GY_OK;
+}
+
+int
+gy_hybrid_appkey_cert_parse(const struct gy_suite_desc *desc,
+                            const uint8_t *buf, size_t len,
+                            struct gy_public_key *sak_curve_pub,
+                            uint8_t *sak_mldsa_pk, uint64_t *issued_at,
+                            uint64_t *expiry, uint32_t *identity_pkid,
+                            uint8_t *identity_ed_sig,
+                            uint8_t *identity_mldsa_sig)
+{
+    size_t cpl, dpl, siglen, dsiglen, kw, need;
+    const uint8_t *p;
+
+    if (desc == NULL || buf == NULL || sak_curve_pub == NULL ||
+        sak_mldsa_pk == NULL || issued_at == NULL || expiry == NULL ||
+        identity_pkid == NULL || identity_ed_sig == NULL ||
+        identity_mldsa_sig == NULL)
+        return GY_ERR_ARG;
+    if (!desc->is_hybrid)
+        return GY_ERR_STATE;
+    cpl = desc->curve_pk_len;
+    dpl = desc->dsa_pk_len;
+    siglen = desc->sig_len;
+    dsiglen = desc->dsa_sig_len;
+    kw = 4 + 1 + cpl;
+    need = 1 + 1 + kw + dpl + 8 + 8 + 4 + siglen + dsiglen;
+    if (len != need)
+        return GY_ERR_ARG;
+    if (buf[0] != GY_WIRE_VERSION)
+        return GY_ERR_ARG;
+    if (buf[1] != desc->suite_id)
+        return GY_ERR_STATE;
+
+    p = buf + 2;
+    get_key(&p, sak_curve_pub, cpl);
+    memcpy(sak_mldsa_pk, p, dpl);
+    p += dpl;
+    *issued_at = get_be64(p);
+    p += 8;
+    *expiry = get_be64(p);
+    p += 8;
+    *identity_pkid = get_be32(p);
+    p += 4;
+    memcpy(identity_ed_sig, p, siglen);
+    p += siglen;
+    memcpy(identity_mldsa_sig, p, dsiglen);
 
     return GY_OK;
 }

@@ -42,6 +42,46 @@ foreach(test_src ${GERYON_TEST_SOURCES})
     endif()
 endforeach()
 
+# Core tests that need GY_TEST_HOOKS-only seams (the D-PQ-3 ML-KEM/ML-DSA
+# _derand entry points and the pqinit RNG draw-count / fault-injection hooks).
+# The production geryon_core is built WITHOUT hooks, so these recompile the core
+# sources into the test with -DGY_TEST_HOOKS and link the primitive providers
+# directly (sodium, monocypher, oqs) instead of geryon_core, avoiding duplicate
+# symbols - the same shape as the kex/ratchet hooked harnesses below.
+file(GLOB GERYON_CORE_HOOKS_TEST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/core_hooks/test_*.c")
+file(GLOB GERYON_CORE_LIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/core/*.c")
+
+function(geryon_add_core_hooks_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE} ${GERYON_CORE_LIB_SOURCES})
+    target_include_directories(${TEST_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/src/core")
+    target_compile_options(${TEST_NAME} PRIVATE ${GERYON_WARNINGS})
+    target_compile_definitions(${TEST_NAME} PRIVATE
+        GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        GY_TEST_HOOKS)
+    # oqs carries its include dir + archive as usage requirements; sodium and
+    # monocypher back the rest of core.
+    target_link_libraries(${TEST_NAME} PRIVATE sodium monocypher oqs)
+    add_dependencies(${TEST_NAME} liboqs_build)
+
+    add_test(NAME ${TEST_NAME} COMMAND $<TARGET_FILE:${TEST_NAME}>)
+    if(ARGN)
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${ARGN}")
+    endif()
+endfunction()
+
+foreach(test_src ${GERYON_CORE_HOOKS_TEST_SOURCES})
+    get_filename_component(test_name "${test_src}" NAME_WE)
+    if(test_name MATCHES "_slow$")
+        geryon_add_core_hooks_test(${test_name} "${test_src}" slow)
+    else()
+        geryon_add_core_hooks_test(${test_name} "${test_src}")
+    endif()
+endforeach()
+
 # Layer 2 (kex/) tests. These recompile the kex sources directly INTO the test
 # executable with -DGY_TEST_HOOKS so the D-X3DH-14 ordering counters are live
 # (the production geryon_kex library is built without hooks). They therefore
@@ -115,6 +155,48 @@ foreach(test_src ${GERYON_RATCHET_TEST_SOURCES})
         geryon_add_ratchet_test(${test_name} "${test_src}" slow)
     else()
         geryon_add_ratchet_test(${test_name} "${test_src}")
+    endif()
+endforeach()
+
+# Ratchet tests that ALSO need core GY_TEST_HOOKS seams (the ML-KEM _derand
+# entry points, for cross-run-deterministic hybrid frame KATs).  Like the
+# core_hooks harness, these recompile the core + kex + ratchet sources into the
+# test with -DGY_TEST_HOOKS and link the providers directly, NEVER the prebuilt
+# geryon_* libraries (which are built without hooks and with GY_PRODUCTION_BUILD,
+# so no test-only symbol can enter the shipped library - src/core/error.h
+# enforces that these two macros never coexist).  GY_PRODUCTION_BUILD is
+# deliberately not set here.
+file(GLOB GERYON_RATCHET_HOOKS_TEST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/ratchet_hooks/test_*.c")
+
+function(geryon_add_ratchet_hooks_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE}
+        ${GERYON_CORE_LIB_SOURCES} ${GERYON_KEX_LIB_SOURCES}
+        ${GERYON_RATCHET_LIB_SOURCES})
+    target_include_directories(${TEST_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/src/core"
+        "${CMAKE_SOURCE_DIR}/src/kex"
+        "${CMAKE_SOURCE_DIR}/src/ratchet")
+    target_compile_options(${TEST_NAME} PRIVATE ${GERYON_WARNINGS})
+    target_compile_definitions(${TEST_NAME} PRIVATE
+        GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        GY_TEST_HOOKS)
+    target_link_libraries(${TEST_NAME} PRIVATE sodium monocypher oqs)
+    add_dependencies(${TEST_NAME} liboqs_build)
+
+    add_test(NAME ${TEST_NAME} COMMAND $<TARGET_FILE:${TEST_NAME}>)
+    if(ARGN)
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${ARGN}")
+    endif()
+endfunction()
+
+foreach(test_src ${GERYON_RATCHET_HOOKS_TEST_SOURCES})
+    get_filename_component(test_name "${test_src}" NAME_WE)
+    if(test_name MATCHES "_slow$")
+        geryon_add_ratchet_hooks_test(${test_name} "${test_src}" slow)
+    else()
+        geryon_add_ratchet_hooks_test(${test_name} "${test_src}")
     endif()
 endforeach()
 

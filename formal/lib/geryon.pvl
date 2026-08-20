@@ -1,0 +1,285 @@
+(* formal/lib/geryon.pvl
+ *
+ * The single shared symbolic theory for geryon's hybrid
+ * protocol. Every model file under formal/models/ consumes THIS library
+ * and only this (formal/README.md), so all encodings live here once.
+ *
+ * Methodology: Bhargavan, Jacomme, Kiefer, Schmidt, "Formal verification
+ * of PQXDH", USENIX Security 2024 (BJKS). Pinned prover: ProVerif 2.04
+ * (D-FM-7). Concatenation in comments is written `||`.
+ *
+ * Declaration -> source map (every declaration cites its origin; a
+ * reviewer can trace each to a HYBRID_SPEC section or a register
+ * decision, and confirm no source is silently altered):
+ *
+ *   DH group / smul / commutation .......... BJKS DH structure
+ *   dhlog (broken-DH destructor) ........... D-FM-2 (BrokenDH)
+ *   kempk/penc/pdec/pqkem_enc .............. D-FM-1 (verbatim, non-binding)
+ *   kemdlog (broken-KEM destructor) ........ D-FM-2 (BrokenKEM)
+ *   encodeEC / encodeKEM (disjoint) ........ BJKS F3; D-X3DH-1
+ *   HASH / HKDF / INFO ..................... HYBRID_SPEC §3.2; D-GEN-3
+ *   comb2 / comb3 (PQ-first combiner) ...... HYBRID_SPEC §3.1
+ *   hdh / hdh_confirm ...................... HYBRID_SPEC §6.3, §8.3
+ *   F / zeros / ikm3 / ikm4 / x3dh_sk* ..... HYBRID_SPEC §2.1, §6.4
+ *   kdf_rk + rk/ck/nhk_split ............... HYBRID_SPEC §7.3 (96 B split); D-DR-14
+ *   kdf_ck_mk / kdf_ck_next ................ HYBRID_SPEC §7.4
+ *   xeddsa_sign/verify ..................... HYBRID_SPEC §5.2 (classical leg)
+ *   mldsa_sign/verify (with ctx) .......... HYBRID_SPEC §5.2; D-PQ-1
+ *   ppair / signed_data / prekey_ok ........ HYBRID_SPEC §5.2 (BOTH required)
+ *   aead_enc/dec .......................... HYBRID_SPEC §7.5
+ *   idbytes / ikhash / hflag / ad_* ....... HYBRID_SPEC §6.6, §6.7
+ *   events Initiator*/Responder* .......... D-FM-4
+ *   Broken*/Compromise* macros + events ... D-FM-2
+ *
+ * Grep obligations (D-FM-1, reviewable syntactically):
+ *   - the ONLY reduction giving pdec power is guarded by kempk(sk): no
+ *     equation lets the attacker decapsulate without the private key;
+ *   - no KEM shared-secret term mentions the public key (ss is a fresh
+ *     name, not a function of pk), so the theory is non-binding and
+ *     never over-credits ML-KEM's internal ek binding.
+ *)
+
+(* ======================================================================
+ * Closed-set parameter constants (D-FM-4 amendment: suite ids, aead ids,
+ * and KDF purposes appear ONLY as free constants; suite binding is
+ * distinctness of these constants, never derived from lengths - D-GEN-3).
+ * The models are parameter-independent: h448_1024 is covered exactly as
+ * h25519_512 by swapping the suite constant (D-FM-4 amendment, M7).
+ * ==================================================================== *)
+
+type suite.
+const su_h25519_512: suite.
+const su_h448_1024:   suite.
+
+type purpose.
+const pu_x3dh:     purpose.   (* §3.2 handshake SK derivation           *)
+const pu_dr_root:  purpose.   (* §3.2 KDF_RK                            *)
+const pu_dr_msg:   purpose.   (* §3.2 KDF_CK message key                *)
+const pu_dr_chain: purpose.   (* §3.2 KDF_CK chain key                  *)
+const pu_dr_aead:  purpose.   (* §3.2 message-key -> AEAD key/nonce     *)
+const pu_dr_sk:    purpose.   (* §3.2 SK -> DR-seed (§7.8.1)            *)
+const pu_he_hka:   purpose.   (* §3.2 SK -> initial header key (§7.8.1) *)
+const pu_he_nhkb:  purpose.   (* §3.2 SK -> initial next header key     *)
+const pu_he_aead:  purpose.   (* §3.2 header-key -> header AEAD (§7.8.3)*)
+const pu_prekey:   purpose.   (* §3.2 ML-DSA ctx for prekey sigs (§5.2) *)
+
+type aead.
+const ae_chacha: aead.        (* §7.5 0x01 ChaCha20-Poly1305 (MTI)      *)
+const ae_aesgcm: aead.        (* §7.5 0x02 AES-256-GCM                  *)
+const ae_aegis:  aead.        (* §7.5 0x03 AEGIS-256                    *)
+
+type interval.                (* §6.6 mlkem_refresh_interval; models pick
+                                 concrete constants (D-FM-3 sets it to 2)  *)
+
+const F:     bitstring.       (* §2.1 X3DH F prefix (32/57 x 0xFF); public *)
+const zeros: bitstring.       (* §6.4 zero-length/zero salt; public        *)
+
+free pub: channel.
+
+(* ======================================================================
+ * 1. DH group (abstract, commutative). BJKS structure.
+ * ==================================================================== *)
+
+type scalar.
+type point.
+const gen: point.
+
+fun smul(scalar, point): point.
+equation forall x: scalar, y: scalar;
+    smul(x, smul(y, gen)) = smul(y, smul(x, gen)).
+
+letfun dhpub(s: scalar)          = smul(s, gen).
+letfun ecdh(s: scalar, p: point) = smul(s, p).
+
+(* D-FM-2 BrokenDH: recover the discrete log of any published DH public
+ * key (all are smul(sk,gen)); [private] so ONLY the BrokenDH process,
+ * not the attacker, may apply it - the process gates it behind an event. *)
+reduc forall s: scalar; dhlog(smul(s, gen)) = s [private].
+
+(* ======================================================================
+ * 2. KEM theory - D-FM-1 verbatim, PKE-style, NON-BINDING.
+ *    penc is a public constructor => an attacker holding an ss can
+ *    re-encapsulate it to any key (BJKS F4). ss is a FRESH name, never a
+ *    function of the public key: the model credits IND-CCA only, no ek/ct
+ *    binding. No binding variant ships here (D-FM-1).
+ * ==================================================================== *)
+
+type kempriv.
+type kempub.
+
+fun kempk(kempriv): kempub.
+fun penc(kempub, bitstring): bitstring.
+reduc forall sk: kempriv, m: bitstring;
+    pdec(sk, penc(kempk(sk), m)) = m.
+
+letfun pqkem_enc(pk: kempub) = new ss: bitstring; (penc(pk, ss), ss).
+
+(* D-FM-2 BrokenKEM: recover the private key from a public key; [private]
+ * and event-gated exactly like dhlog. *)
+reduc forall sk: kempriv; kemdlog(kempk(sk)) = sk [private].
+
+(* ======================================================================
+ * 3. Encodings - disjoint [data] constructors (BJKS F3 lesson; D-X3DH-1).
+ *    EC points and KEM secrets never collide as combiner inputs.
+ * ==================================================================== *)
+
+fun encodeEC(point): bitstring [data].
+fun encodeKEM(bitstring): bitstring [data].
+
+(* ======================================================================
+ * 4. Hash / KDF / suite binding (§3.2). HASH and HKDF are one-way
+ *    constructors (no reduc), so the attacker cannot invert them; INFO is
+ *    a transparent [data] constructor whose distinctness is the sole
+ *    domain separator (D-GEN-3). The D-FM-4.5 confirmation chain relies on
+ *    HASH being an injective free symbol.
+ * ==================================================================== *)
+
+fun HASH(bitstring): bitstring.
+fun INFO(suite, purpose): bitstring [data].
+fun HKDF(bitstring, bitstring, bitstring): bitstring.   (* salt, ikm, info *)
+
+(* §3.1 combiner, PQ inputs first, classical last. Two forms: the ratchet
+ * form HASH(kem_ss || dh) and the confirmation form
+ * HASH(confirm_ss || kem_ss || dh) (§8.3). *)
+fun comb2(bitstring, bitstring): bitstring [data].
+fun comb3(bitstring, bitstring, bitstring): bitstring [data].
+
+letfun hdh(kem_ss: bitstring, dh: point) =
+    HASH(comb2(kem_ss, encodeEC(dh))).
+letfun hdh_confirm(confirm_ss: bitstring, kem_ss: bitstring, dh: point) =
+    HASH(comb3(confirm_ss, kem_ss, encodeEC(dh))).
+
+(* §6.4 SK = HKDF(salt=zeros, IKM = F || HDH1..HDH3[||HDH4],
+ *                info = INFO(suite,"x3dh"), L = 32). OPK-present and
+ * OPK-absent handshakes both run (D-FM-4). *)
+fun ikm3(bitstring, bitstring, bitstring, bitstring): bitstring [data].
+fun ikm4(bitstring, bitstring, bitstring, bitstring, bitstring): bitstring [data].
+
+letfun x3dh_sk3(su: suite, h1: bitstring, h2: bitstring, h3: bitstring) =
+    HKDF(zeros, ikm3(F, h1, h2, h3), INFO(su, pu_x3dh)).
+letfun x3dh_sk4(su: suite, h1: bitstring, h2: bitstring, h3: bitstring, h4: bitstring) =
+    HKDF(zeros, ikm4(F, h1, h2, h3, h4), INFO(su, pu_x3dh)).
+
+(* §7.3 KDF_RK: one 96-byte HKDF output split into (rk, ck, nhk). The
+ * three splitters are distinct one-way constructors with no inverse, so
+ * nhk (a header key) never reaches rk or ck: this is the D-FM-6 "no
+ * feedback path from header keys into the root chain" property, made
+ * syntactic. *)
+letfun kdf_rk(su: suite, rk: bitstring, h: bitstring) =
+    HKDF(rk, h, INFO(su, pu_dr_root)).
+fun rk_split(bitstring):  bitstring.
+fun ck_split(bitstring):  bitstring.
+fun nhk_split(bitstring): bitstring.
+
+(* §7.4 KDF_CK: mk and ck' from ck under distinct labels; the suite is
+ * threaded so the derivation carries suite binding. Distinct functions
+ * capture the distinct SP 800-108 Labels (dr.msg vs dr.chain). *)
+fun kdf_ck_mk(suite, bitstring):   bitstring.
+fun kdf_ck_next(suite, bitstring): bitstring.
+
+(* ======================================================================
+ * 5. Signatures (§5.2). XEdDSA and ML-DSA are SEPARATE theories; hybrid
+ *    prekey verification requires BOTH (prekey_ok). The signed bytes are
+ *    a typed [data] pairing of (curve_pk, mlkem_ek) so the dual signature
+ *    binds the pair, not the halves.
+ * ==================================================================== *)
+
+(* XEdDSA: verification key is the curve public smul(sk,gen). *)
+fun xeddsa_sign(scalar, bitstring): bitstring.
+reduc forall sk: scalar, m: bitstring;
+    xeddsa_verify(smul(sk, gen), m, xeddsa_sign(sk, m)) = true.
+
+(* ML-DSA: independent keypair, hedged; ctx = INFO(suite,"prekey")
+ * (FIPS 204 scheme-level framing, not part of signed_data). *)
+type mldsapriv.
+type mldsapub.
+fun mldsapk(mldsapriv): mldsapub.
+fun mldsa_sign(mldsapriv, bitstring, bitstring): bitstring.   (* sk, msg, ctx *)
+reduc forall sk: mldsapriv, m: bitstring, ctx: bitstring;
+    mldsa_verify(mldsapk(sk), m, ctx, mldsa_sign(sk, m, ctx)) = true.
+
+(* §5.2 signed_data = encoded_public_key || timestamp || flags, where the
+ * encoded public key is the (curve_pk, mlkem_ek) pairing. *)
+fun ppair(point, kempub): bitstring [data].
+fun signed_data(bitstring, bitstring, bitstring): bitstring [data]. (* enc_pk, ts, flags *)
+
+(* BOTH signatures must verify over the identical bytes; if either
+ * destructor fails to reduce, prekey_ok fails and the caller's path
+ * blocks - never a single-signature accept (§5.2). *)
+letfun prekey_ok(ik_curve: point, ik_mldsa: mldsapub, sd: bitstring,
+                 ctx: bitstring, ed: bitstring, md: bitstring) =
+    xeddsa_verify(ik_curve, sd, ed) && mldsa_verify(ik_mldsa, sd, ctx, md).
+
+(* ======================================================================
+ * 6. AEAD with associated data (§7.5) and AD construction (§6.6-6.7).
+ * ==================================================================== *)
+
+fun aead_enc(bitstring, bitstring, bitstring): bitstring.   (* key, ad, pt *)
+reduc forall k: bitstring, ad: bitstring, m: bitstring;
+    aead_dec(k, ad, aead_enc(k, ad, m)) = m.
+
+(* §6.7 IKhash(X) = HASH(curve_type || curve_pk || mlkem_ek || mldsa_pk). *)
+fun idbytes(point, kempub, mldsapub): bitstring [data].
+letfun ikhash(c: point, k: kempub, d: mldsapub) = HASH(idbytes(c, k, d)).
+
+(* §6.6 hybrid_flag carries (interval, aead_id); binding both is the
+ * D-FM-4 parameter-agreement target. *)
+fun hflag(interval, aead): bitstring [data].
+
+(* §6.7 AD_session = IKhash(A) || IKhash(B); AD_first = AD_session ||
+ * hybrid_flag. *)
+fun ad_session(bitstring, bitstring): bitstring [data].
+fun ad_first(bitstring, bitstring): bitstring [data].       (* ad_session, hflag *)
+
+letfun ad_sess(ha: bitstring, hb: bitstring) = ad_session(ha, hb).
+letfun ad_frst(ha: bitstring, hb: bitstring, hf: bitstring) =
+    ad_first(ad_session(ha, hb), hf).
+
+(* ======================================================================
+ * 7. Events (D-FM-4). Each carries the full parameter tuple:
+ *    (suite, interval, aead, idA, idB, spk_id, opk_id), where identities
+ *    are their IKhash and spk_id/opk_id are the PKIDs used.
+ * ==================================================================== *)
+
+event InitiatorStarted(suite, interval, aead, bitstring, bitstring, bitstring, bitstring).
+event ResponderAccepted(suite, interval, aead, bitstring, bitstring, bitstring, bitstring).
+event ResponderConfirmed(suite, interval, aead, bitstring, bitstring, bitstring, bitstring).
+event InitiatorPQConfirmed(suite, interval, aead, bitstring, bitstring, bitstring, bitstring).
+
+(* Broken-primitive and per-key-class compromise events (D-FM-2); queries
+ * are conditioned on these so each states exactly which compromise set
+ * defeats it. *)
+event BrokenDHev.
+event BrokenKEMev.
+event CompromiseCurve(point).
+event CompromiseKEM(kempub).
+event CompromiseMLDSA(mldsapub).
+
+(* ======================================================================
+ * 8. Attacker infrastructure (D-FM-2). Process macros the models compose;
+ *    the CI configurations toggle BrokenDH/BrokenKEM via the CPP guards
+ *    UnbreakableDH / UnbreakableKEM in each model (the "quantum attacker"
+ *    is the configuration with BrokenDH enabled).
+ * ==================================================================== *)
+
+(* Grant the discrete log of an attacker-chosen published DH key. *)
+let BrokenDH() =
+    in(pub, p: point);
+    event BrokenDHev;
+    out(pub, dhlog(p)).
+
+(* Grant the private key behind an attacker-chosen published KEM key. *)
+let BrokenKEM() =
+    in(pub, pk: kempub);
+    event BrokenKEMev;
+    out(pub, kemdlog(pk)).
+
+(* Per-key-class compromise: leak a specific honest secret, tagged by its
+ * public key so queries can name the exact compromise. Models invoke
+ * these under ProVerif phases aligned to the epoch boundaries (D-FM-3). *)
+let CompromiseCurveKey(s: scalar) =
+    event CompromiseCurve(smul(s, gen)); out(pub, s).
+let CompromiseKEMKey(s: kempriv) =
+    event CompromiseKEM(kempk(s)); out(pub, s).
+let CompromiseMLDSAKey(s: mldsapriv) =
+    event CompromiseMLDSA(mldsapk(s)); out(pub, s).

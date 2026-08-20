@@ -1,0 +1,244 @@
+(* formal/models/ratchet.pv
+ *
+ * Bounded hybrid Double Ratchet: forward secrecy, the §9
+ * refresh-interval vulnerable window / post-compromise security, and
+ * header-encryption derivation (D-DR-14, §7.8). Consumes
+ * formal/lib/geryon.pvl only. Realizes D-FM-3 (3-epoch bound) and D-FM-6
+ * (HE scope) over HYBRID_SPEC §7.3-7.4, §7.8, §8.3, §9.
+ *
+ * ATTACKER MODEL: the quantum attacker (D-FM-2), i.e. BrokenDH is
+ * ON throughout - every ratchet-step DH output is published. Under that
+ * attacker the §9 FS/PCS claims become claims about the ML-KEM ratchet
+ * keypair alone, which is exactly what this model isolates. Non-quantum
+ * (classical-attacker) secrecy is x3dh_secrecy.pv's job; this file
+ * does not re-prove it.
+ *
+ * KEY ABSTRACTION (the agreement-model tractability lesson, applied): each
+ * ratchet
+ * step's DH contribution is modeled as an OPAQUE fresh shared secret
+ * (a `new dh_e: bitstring`), not a point in the smul group. Two facts make
+ * this both faithful and necessary:
+ *   - faithful: the security content of FS/PCS is the KDF-chain structure
+ *     and the per-step fresh entropy, not DH algebra; each step still fuses
+ *     a fresh dh_e with a fresh kem_ss_e via the §3.1 combiner, so the
+ *     hybrid "either leg survives" property is intact (leak dh_e but keep
+ *     kem_ss_e and the fused hdh stays secret);
+ *   - necessary: raw smul exponents across THREE steps plus the DH
+ *     commutation equation diverge the clause set (the agreement-model
+ *     finding). A
+ *     curve-ratchet-key compromise is subsumed: BrokenDH already publishes
+ *     every dh_e, which is strictly more than leaking one ratchet scalar.
+ * The ML-KEM ratchet keypairs stay CONCRETE (kempk/pdec): the refresh
+ * boundary and the dk-compromise window are the whole point of §9, so the
+ * KEM side is modeled exactly (D-FM-1 non-binding theory, from the lib).
+ *
+ * LAYOUT (D-FM-3, interval = 2, phases at the epoch boundaries):
+ *   epoch 1 (phase 0): Alice's initial sending chain; encaps to rek1.
+ *   epoch 2 (phase 1): Bob's reply, §8.3 CONFIRMATION form
+ *                      (hdh = HASH(confirm_ss || kem_ss || dh)); still rek1
+ *                      (interval = 2, so the keypair is REUSED here).
+ *   epoch 3 (phase 2): refresh boundary crossed - fresh rek2; ordinary
+ *                      hdh = HASH(kem_ss || dh).
+ * The post-handshake root rk0 (= SKdr, §7.8.1) is derived from a handshake
+ * secret that is NEVER leaked: the handshake's own secrecy is x3dh_secrecy's
+ * result, so here rk0 is an uncompromisable shared seed and the
+ * questions are purely about the ratchet forward from it.
+ *
+ * COMPROMISES (all event-gated / optional, so ONE configuration answers
+ * every query in BJKS "secret unless" style; a query names the exact set
+ * that defeats it):
+ *   CState1 / CState3   leak (rk_e, ck_e), the mutable session state at the
+ *                       epoch (root + chain key); models a state compromise.
+ *   CompromiseKEM(rek1/rek2/ika) per-key ML-KEM compromise (lib macro).
+ *   BrokenKEM()         the global KEM break (lib oracle), fires BrokenKEMev.
+ * rk0 has NO compromise offer (handshake secrecy). rek2 is offered
+ * so epoch-3 secrecy genuinely rests on the fresh keypair (PCS pivot).
+ *
+ * INJECTIVE AGREEMENT (deferred here from the agreement model, register
+ * amendment
+ * 2026-08-10): NOT mechanized. Injectivity of the confirmation-chain
+ * agreement rests on the §6.8 base-key dedupe and the §7.2 monotonic
+ * message counters - a stateful atomic test-and-set. ProVerif's applied-pi
+ * fragment cannot express that test-and-set (tables give no atomicity), so
+ * a mechanized injective query would report a spurious replay that the
+ * unmodeled counter defeats, not a real attack. It is therefore RESOLVED as
+ * a documented modeling boundary, argued in prose (docs/decisions/formal.md
+ * D-FM-4 injective-agreement amendment); the non-injective agreement is
+ * proved at agreement.pv. This file mechanizes the properties that
+ * ARE in ProVerif's fragment: secrecy, FS, PCS, HE derivation.
+ *
+ * Queries and expected verdicts (see formal/README.md):
+ *   1. FS (epoch-1 message key): attacker(s1) ==> CState1 : proved
+ *        secret unless the epoch-1 state itself is compromised; NOT
+ *        defeated by any LATER-phase compromise (CState3), nor by any
+ *        DH/KEM break (the secret root chain protects it). This is forward
+ *        secrecy: future compromise never reaches a past message key.
+ *   2. §9 vulnerable window (epoch-2 message key, EXPECTED attack):
+ *        attacker(s2) : attack. The epoch-1 state compromise PROPAGATES
+ *        forward through the REUSED ML-KEM keypair (interval = 2): with rk1
+ *        (CState1), the epoch-1 receiving dk (CompromiseKEM rek1), Alice's
+ *        identity dk for confirm_ss (CompromiseKEM ika), and BrokenDH, the
+ *        attacker derives mk2. This is the pre-regeneration window.
+ *   3. PCS / post-regeneration (epoch-3 message key):
+ *        attacker(s3) ==> BrokenKEMev || CompromiseKEM(rek2) || CState3
+ *        : proved. The SAME epoch-1 compromise does NOT reach epoch 3: the
+ *        2->3 refresh mints rek2, so healing needs a FRESH KEM break or a
+ *        new state compromise. Secrecy is restored (§9, §10.2 PCS).
+ *   4. HE header-key secrecy (D-FM-6): attacker(hkw) ==> RevealHK : proved.
+ *        nhk1 (a header key) is a distinct one-way split of the same KDF_RK
+ *        output as rk1/ck1; a state compromise leaking rk1/ck1 does NOT
+ *        reveal it, so header keys are secret unless explicitly revealed.
+ *   5. HE no-feedback into the root chain (D-FM-6): attacker(rw3) ==>
+ *        BrokenKEMev || CompromiseKEM(rek2) || CState3 : proved. Revealing
+ *        ALL header keys (RevealHK) is NOT in the epoch-3 root key's
+ *        defeating set: header keys never feed the root/message chain (the
+ *        nhk_split vs rk_split/ck_split disjointness, made syntactic).
+ *   6. non-vacuity: the honest 3-epoch run completes
+ *        (attacker(reached_ratchet)) : attack (reachable = PASS).
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+(* Model-local: the hybrid combiner over an OPAQUE (bitstring) dh, since the
+ * ratchet dh is abstracted (see header). Ordinary form (§7.3) and the §8.3
+ * confirmation form; PQ inputs first, confirmation secret outermost. *)
+letfun hdh_b(kem_ss: bitstring, dh: bitstring) =
+    HASH(comb2(kem_ss, dh)).
+letfun hdh_cb(cs: bitstring, kem_ss: bitstring, dh: bitstring) =
+    HASH(comb3(cs, kem_ss, dh)).
+
+(* State-compromise and header-reveal events (model-local; the KEM
+ * compromise and BrokenKEM events come from the lib). *)
+event CState1.
+event CState3.
+event RevealHK.
+event HealKEM(kempub).   (* marks the epoch-3 (post-refresh) KEM keypair *)
+
+free adc: bitstring.   (* fixed associated data for the witness AEADs *)
+
+(* Secrecy witnesses: each is encrypted under the key whose secrecy the
+ * corresponding query tests (attacker learns the witness iff it derives the
+ * key). All private; never output in the clear. *)
+free s1:  bitstring [private].   (* under mk1  - FS               *)
+free s2:  bitstring [private].   (* under mk2  - §9 window        *)
+free s3:  bitstring [private].   (* under mk3  - PCS              *)
+free hkw: bitstring [private].   (* under nhk1 - HE header key    *)
+free rw3: bitstring [private].   (* under rk3  - HE no-feedback   *)
+free reached_ratchet: bitstring [private].   (* non-vacuity       *)
+
+(* ---- Query 1: forward secrecy (epoch-1 message key) ------------------- *)
+query attacker(s1) ==> event(CState1).
+
+(* ---- Query 2: §9 vulnerable window (EXPECTED attack) ------------------ *)
+query attacker(s2).
+
+(* ---- Query 3: PCS / post-regeneration (epoch-3 message key) -----------
+ * The CompromiseKEM(kk) && HealKEM(kk) conjunction pins kk to the epoch-3
+ * (post-refresh) keypair rek2: an epoch-1 KEM compromise (rek1) can NOT
+ * satisfy it, so the query genuinely excludes the pre-refresh window and
+ * states PCS - secrecy restored by the fresh keypair. *)
+query kk: kempub;
+    attacker(s3) ==>
+        event(BrokenKEMev)
+        || (event(CompromiseKEM(kk)) && event(HealKEM(kk)))
+        || event(CState3).
+
+(* ---- Query 4: HE header-key secrecy ---------------------------------- *)
+query attacker(hkw) ==> event(RevealHK).
+
+(* ---- Query 5: HE no feedback into the root chain ---------------------- *)
+query kk: kempub;
+    attacker(rw3) ==>
+        event(BrokenKEMev)
+        || (event(CompromiseKEM(kk)) && event(HealKEM(kk)))
+        || event(CState3).
+
+(* ---- Query 6: non-vacuity of the honest 3-epoch run ------------------ *)
+query attacker(reached_ratchet).
+
+(* ==================================================================== *)
+process
+    (* Handshake-derived seeds (§7.8.1). sk_hs is NEVER leaked: the
+     * handshake's secrecy is x3dh_secrecy.pv's result, so rk0 is an
+     * uncompromisable shared root here. *)
+    new sk_hs: bitstring;
+    let su = su_h25519_512 in
+    let skdr        = HKDF(sk_hs, zeros, INFO(su, pu_dr_sk))  in
+    let shared_hka  = HKDF(sk_hs, zeros, INFO(su, pu_he_hka)) in
+    let shared_nhkb = HKDF(sk_hs, zeros, INFO(su, pu_he_nhkb)) in
+    let rk0 = skdr in
+
+    (* ML-KEM ratchet keypairs: rek1 for epochs 1-2 (interval = 2), rek2
+     * after the refresh; ika for Alice's identity (the §8.3 confirmation). *)
+    new rdk1: kempriv;    let rek1 = kempk(rdk1) in
+    new rdk2: kempriv;    let rek2 = kempk(rdk2) in
+    new ika_kem: kempriv; let ika_ek = kempk(ika_kem) in
+    out(pub, (rek1, rek2, ika_ek));
+
+    (* ===== epoch 1 (phase 0): Alice's initial sending chain =========== *)
+    let (ct1: bitstring, kem_ss1: bitstring) = pqkem_enc(rek1) in
+    new dh1: bitstring;
+    let hdh1 = hdh_b(kem_ss1, dh1) in
+    let out1 = kdf_rk(su, rk0, hdh1) in
+    let rk1  = rk_split(out1)  in
+    let ck1  = ck_split(out1)  in
+    let nhk1 = nhk_split(out1) in
+    let mk1  = kdf_ck_mk(su, ck1) in
+    event BrokenDHev;                 (* quantum attacker: DH is broken *)
+    out(pub, ct1);
+    out(pub, dh1);
+    out(pub, aead_enc(mk1,  adc, s1));
+    out(pub, aead_enc(nhk1, adc, hkw));
+    (
+        (* CState1: epoch-1 state compromise (root + chain), epoch-2 era. *)
+        ( phase 1; in(pub, z1: bitstring);
+          event CState1; out(pub, (rk1, ck1)) )
+      |
+        (* ===== epoch 2 (phase 1): Bob's reply, §8.3 confirmation form === *)
+        ( phase 1;
+          let (ct2: bitstring, kem_ss2: bitstring) = pqkem_enc(rek1) in
+          let (cct: bitstring, confirm_ss: bitstring) = pqkem_enc(ika_ek) in
+          new dh2: bitstring;
+          let hdh2 = hdh_cb(confirm_ss, kem_ss2, dh2) in
+          let out2 = kdf_rk(su, rk1, hdh2) in
+          let rk2  = rk_split(out2)  in
+          let ck2  = ck_split(out2)  in
+          let nhk2 = nhk_split(out2) in
+          let mk2  = kdf_ck_mk(su, ck2) in
+          out(pub, (ct2, cct));
+          out(pub, dh2);
+          out(pub, aead_enc(mk2, adc, s2));
+          (* ===== epoch 3 (phase 2): refresh boundary, fresh rek2 ======= *)
+          ( phase 2;
+            event HealKEM(rek2);      (* epoch 3 uses the refreshed keypair *)
+            let (ct3: bitstring, kem_ss3: bitstring) = pqkem_enc(rek2) in
+            new dh3: bitstring;
+            let hdh3 = hdh_b(kem_ss3, dh3) in
+            let out3 = kdf_rk(su, rk2, hdh3) in
+            let rk3  = rk_split(out3)  in
+            let ck3  = ck_split(out3)  in
+            let nhk3 = nhk_split(out3) in
+            let mk3  = kdf_ck_mk(su, ck3) in
+            out(pub, ct3);
+            out(pub, dh3);
+            out(pub, aead_enc(mk3, adc, s3));
+            out(pub, aead_enc(rk3, adc, rw3));
+            out(pub, reached_ratchet);
+            (
+                (* CState3: epoch-3 state compromise (FS future compromise). *)
+                ( in(pub, z3: bitstring);
+                  event CState3; out(pub, (rk3, ck3)) )
+              |
+                (* RevealHK: leak EVERY header key (initial seeds + all nhk). *)
+                ( in(pub, zh: bitstring);
+                  event RevealHK;
+                  out(pub, (shared_hka, shared_nhkb, nhk1, nhk2, nhk3)) )
+            )
+          )
+        )
+    )
+    (* ===== optional KEM compromises (top scope: rdk1/rdk2/ika_kem) ===== *)
+  | ( in(pub, za: bitstring); CompromiseKEMKey(rdk1)    )
+  | ( in(pub, zb: bitstring); CompromiseKEMKey(rdk2)    )
+  | ( in(pub, zc: bitstring); CompromiseKEMKey(ika_kem) )
+    (* the global KEM break (D-FM-2): fires BrokenKEMev *)
+  | ( ! BrokenKEM() )

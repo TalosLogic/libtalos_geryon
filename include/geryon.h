@@ -65,16 +65,17 @@ extern "C" {
 /* ---- versioning -------------------------------------------------------- */
 
 #define GY_VERSION_MAJOR 1
-#define GY_VERSION_MINOR 0
+#define GY_VERSION_MINOR 1
 #define GY_VERSION_PATCH 0
 #define GY_PROTOCOL_VERSION 0x01 /* wire version byte (D-GEN-1). */
 
 /* ---- cipher suites (pinned per identity, never negotiated) ------------- */
 
-#define GY_SUITE_C25519 0x01     /* X25519 + XEdDSA, SHA-256 (classical). */
-#define GY_SUITE_H25519_512 0x02 /* reserved for a future suite. */
-#define GY_SUITE_C448 0x03       /* X448 + XEd448, SHA-512 (classical). */
-#define GY_SUITE_H448_1024 0x04  /* reserved for a future suite. */
+#define GY_SUITE_C25519 0x01 /* X25519 + XEdDSA, SHA-256 (classical). */
+#define GY_SUITE_H25519_512                                                    \
+    0x02 /* X25519 + ML-KEM-512, XEdDSA + ML-DSA-44 (hybrid). */
+#define GY_SUITE_C448 0x03      /* X448 + XEd448, SHA-512 (classical). */
+#define GY_SUITE_H448_1024 0x04 /* reserved for a future suite. */
 
 /*
  * Error codes (ABI-stable; every code documented).  Defined as macros so they
@@ -197,7 +198,11 @@ typedef struct gy_fanout_desc {
     int status; /* GY_FANOUT_* */
 } gy_fanout_desc;
 
-/* PQ-authentication states (classical suites are always NOT_APPLICABLE). */
+/*
+ * PQ-authentication states.  Classical suites are always NOT_APPLICABLE.
+ * Hybrid suites report PENDING until the initiator's identity ML-KEM key is
+ * confirmed, then CONFIRMED (deniable KEM confirmation, HYBRID_SPEC).
+ */
 #define GY_PQ_NOT_APPLICABLE 0
 #define GY_PQ_PENDING 1
 #define GY_PQ_CONFIRMED 2
@@ -392,9 +397,10 @@ GY_EXPORT int gy_purge_user(gy_custodian *c, const uint8_t *user_id,
                             size_t user_id_len);
 
 /*
- * Query a peer device's PQ-authentication state.  Returns
- * GY_PQ_NOT_APPLICABLE for the classical suites (reserved so a future suite
- * can report it additively), or a negative gy_error.
+ * Query a peer device's PQ-authentication state.  Classical suites always
+ * return GY_PQ_NOT_APPLICABLE.  Hybrid suites return GY_PQ_PENDING until the
+ * initiator's first valid message after the responder's deniable KEM
+ * confirmation, then GY_PQ_CONFIRMED (HYBRID_SPEC).  Negative on gy_error.
  */
 GY_EXPORT int gy_pq_pending(gy_custodian *c, const uint8_t *user_id,
                             size_t user_id_len, const uint8_t *device_id,
@@ -500,9 +506,12 @@ GY_EXPORT int gy_opk_batch_get(const uint8_t *batch, size_t batch_len,
  * custodian and no private key (like gy_bundle_assemble / gy_appkey_verify):
  * a directory pins a client's IK for gy_appkey_verify's identity_pub argument
  * (TOFU on first publish) without holding any secret.  *ik_pub is a zero-copy
- * pointer into registration (valid while it stays alive); *ik_len is the
- * suite's curve_pk_len.  A malformed registration is GY_ERR_ARG.  Returns
- * GY_OK or a negative GY_ERR_*.
+ * pointer into registration (valid while it stays alive).  For a classical
+ * suite *ik_len is the curve_pk_len (raw curve key).  For a HYBRID suite it is
+ * the full hybrid identity encoding (curve_type || curve_pk || mlkem_ek ||
+ * mldsa_pk), the bytes gy_appkey_verify needs to check both cert signatures;
+ * pass the returned (ik_pub, ik_len) straight through to gy_appkey_verify.  A
+ * malformed registration is GY_ERR_ARG.  Returns GY_OK or a negative GY_ERR_*.
  */
 GY_EXPORT int gy_registration_identity_pub(const uint8_t *registration,
                                            size_t reg_len,
@@ -527,13 +536,18 @@ GY_EXPORT int gy_bundle_fingerprint(const uint8_t *bundle, size_t bundle_len,
 /* ---- application signing key (CUSTODY_SPEC section 10) ----------------- */
 
 /*
- * Mint a fresh application signing key (XEdDSA, classical suite only this
- * milestone), certify it with the identity key, seal, and persist.  c must
- * have a generated identity and must NOT already hold a SAK (GY_ERR_STATE;
- * use gy_custodian_rotate_appkey to replace one).  expiry is a caller-
- * chosen absolute time bound (0 = no expiry); the library never reads a
- * clock.  The identity key is NEVER used for request signing.  Returns
- * GY_OK or a negative GY_ERR_*.
+ * Mint a fresh application signing key, certify it with the identity key,
+ * seal, and persist.  In a classical suite the SAK is XEdDSA; in a HYBRID
+ * suite it is dual-scheme (an XEdDSA key AND an ML-DSA key), certified under
+ * both, so per-request signatures and the cert are each a signature pair that
+ * verify together (no identity-signed artifact drops to classical-only PQ
+ * authentication).  The suite is fixed by the identity; the API is otherwise
+ * identical, only the cert and signature sizes grow (size-query as usual).  c
+ * must have a generated identity and must NOT already hold a SAK (GY_ERR_STATE;
+ * use gy_custodian_rotate_appkey to replace one).  expiry is a caller-chosen
+ * absolute time bound (0 = no expiry); the library never reads a clock.  The
+ * identity key is NEVER used for request signing.  Returns GY_OK or a negative
+ * GY_ERR_*.
  */
 GY_EXPORT int gy_custodian_generate_appkey(gy_custodian *c, uint64_t expiry,
                                            gy_key_handle *out);
@@ -576,14 +590,17 @@ GY_EXPORT int gy_custodian_sign(gy_custodian *c, gy_key_handle sak,
 /*
  * Verify a SAK-signed request: a FREE function, no custodian and no private
  * key (server-side), needing no custodian (like gy_bundle_assemble).
- * identity_pub is the raw identity public key bytes (curve_pk_len for the
- * cert's own suite), pinned by the caller out of band or via TOFU - never
- * taken from the cert.  Verifies the identity's signature over cert, the
- * expiry against now (0 in the cert = no expiry), then the SAK signature
- * over the same domain-separated framing gy_custodian_sign used.  Returns
- * GY_OK, GY_ERR_EXPIRED past expiry, or GY_ERR_VERIFY on any signature
- * failure (the identity-over-cert check and the SAK-over-request check
- * share this one uniform failure code - no partial-validity oracle).
+ * identity_pub is the identity public key bytes pinned by the caller out of
+ * band or via TOFU (never taken from the cert), exactly as
+ * gy_registration_identity_pub returns them: for a classical suite the raw
+ * curve key (curve_pk_len), for a HYBRID suite the full hybrid identity
+ * encoding (curve_type || curve_pk || mlkem_ek || mldsa_pk).  Verifies the
+ * identity's signature(s) over cert, the expiry against now (0 in the cert =
+ * no expiry), then the SAK signature(s) over the same domain-separated framing
+ * gy_custodian_sign used; a hybrid cert and request each carry an XEdDSA and an
+ * ML-DSA signature and BOTH must pass.  Returns GY_OK, GY_ERR_EXPIRED past
+ * expiry, or GY_ERR_VERIFY on any signature failure (all checks share this one
+ * uniform failure code - no partial-validity oracle).
  */
 GY_EXPORT int gy_appkey_verify(const uint8_t *identity_pub,
                                size_t identity_pub_len, const uint8_t *cert,

@@ -14,7 +14,14 @@ Regenerating any vector file requires updating the corresponding row here
 
 - The primitives and the prescriptive protocol stages are vector-backed where
   an external oracle is prescriptive (XEdDSA and X3DH, below; RFC/NIST vectors
-  for the primitives).
+  for the primitives, including the FIPS 203/204 ACVP vectors for ML-KEM and
+  ML-DSA).
+- **The hybrid protocol has NO external oracle.** The libsignal oracles are
+  valid for the classical suite and the shared primitives only; geryon's hybrid
+  suite is its own design (HYBRID_SPEC.md), so it is validated by
+  HYBRID_SPEC-derived known-answer vectors, cross-checks of each mixed-in
+  primitive against its FIPS/RFC vectors, and the ProVerif models under
+  `formal/`, not by any cross-implementation oracle.
 - **The session layer (`session/` + `proto/`) uses NO oracle.** Sesame
   message-to-session association under header encryption and geryon's base-key
   dedupe are geryon's own realizations (D-SES-6), and no cross-implementation

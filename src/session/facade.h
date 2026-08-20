@@ -47,6 +47,19 @@ int gy_signed_prekey_generate(const struct gy_suite_desc *desc,
 int gy_opk_generate(const struct gy_suite_desc *desc, struct gy_keypair *out,
                     size_t n, const uint32_t *existing, size_t n_existing);
 
+/* Hybrid-suite equivalents (HYBRID_SPEC section 4/5): identity, signed prekey
+ * (with the section 5.3 flags), and one-time-prekey batch. */
+int gy_hybrid_identity_generate(const struct gy_suite_desc *desc,
+                                struct gy_hybrid_identity_keypair *ik);
+int
+gy_hybrid_signed_prekey_generate(const struct gy_suite_desc *desc,
+                                 struct gy_hybrid_signed_prekey *spk,
+                                 const struct gy_hybrid_identity_keypair *ik,
+                                 uint64_t timestamp, uint64_t flags);
+int gy_hybrid_opk_generate(const struct gy_suite_desc *desc,
+                           struct gy_hybrid_keypair *out, size_t n,
+                           const uint32_t *existing, size_t n_existing);
+
 /* Constant-time wipe of key material (wraps the core secure-zero). */
 void gy_wipe(void *p, size_t n);
 

@@ -6,17 +6,29 @@
 #include <sodium.h>
 
 #include "error.h"
+#include "pqinit.h"
 #include "util.h"
 
 int
 gy_core_init(void)
 {
+    int rc;
+
     /*
      * sodium_init() returns 0 on first success, 1 if already initialized
      * (both fine), and -1 on failure.
      */
     if (sodium_init() < 0)
         return GY_ERR_CRYPTO;
+
+    /*
+     * Point liboqs at geryon's RNG before any PQ primitive can run (D-PQ-2).
+     * Ordering matters: this must precede the first keypair/encaps/sign call,
+     * so it lives in the one mandatory init entry point.
+     */
+    if ((rc = gy_pq_init()) != GY_OK)
+        return rc;
+
     return GY_OK;
 }
 

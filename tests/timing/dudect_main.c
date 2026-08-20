@@ -45,19 +45,13 @@ extern const struct gy_dudect_target target_kdf_ctr;
 extern const struct gy_dudect_target target_dr_tag;
 extern const struct gy_dudect_target target_he_tag;
 extern const struct gy_dudect_target target_he_recv;
+extern const struct gy_dudect_target target_hybrid_x3dh;
 
 static const struct gy_dudect_target *const target_registry[] = {
-    &target_sentinel_leak,
-    &target_sentinel_clean,
-    &target_const_memcmp,
-    &target_x25519,
-    &target_xeddsa_sign,
-    &target_aead_tag,
-    &target_kdf_ctr,
-    &target_dr_tag,
-    &target_he_tag,
-    &target_he_recv,
-    NULL,
+    &target_sentinel_leak, &target_sentinel_clean, &target_const_memcmp,
+    &target_x25519,        &target_xeddsa_sign,    &target_aead_tag,
+    &target_kdf_ctr,       &target_dr_tag,         &target_he_tag,
+    &target_he_recv,       &target_hybrid_x3dh,    NULL,
 };
 
 static volatile sig_atomic_t g_stop = 0;

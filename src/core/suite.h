@@ -37,6 +37,21 @@
 #define GY_F_MAX 57
 
 /*
+ * Hybrid component maxima, set by the h448_1024 tier (ML-KEM-1024, ML-DSA-87).
+ * Zero-cost for classical suites, which never instantiate hybrid structures;
+ * hybrid key structures (kex/prekeys.h) size against these the same way the
+ * curve maxima above size classical ones.  h25519_512 uses the smaller
+ * ML-KEM-512 / ML-DSA-44 lengths, carried in the descriptor kem_/dsa_ fields.
+ */
+#define GY_KEM_EK_MAX 1568  /* ML-KEM-1024 encapsulation key */
+#define GY_KEM_DK_MAX 3168  /* ML-KEM-1024 decapsulation key */
+#define GY_KEM_CT_MAX 1568  /* ML-KEM-1024 ciphertext */
+#define GY_KEM_SS_MAX 32    /* ML-KEM shared secret */
+#define GY_DSA_PK_MAX 2592  /* ML-DSA-87 public key */
+#define GY_DSA_SK_MAX 4896  /* ML-DSA-87 secret key */
+#define GY_DSA_SIG_MAX 4627 /* ML-DSA-87 signature */
+
+/*
  * Scatter/gather element (D-X3DH-7): the multi-input hash ops take an array of
  * these so a caller can feed logically-concatenated inputs without ever
  * building a concatenation buffer in memory.  p may be NULL only when len is 0.
@@ -102,10 +117,16 @@ struct gy_suite_desc {
     int (*kem_keypair)(uint8_t *pk, uint8_t *sk);
     int (*kem_encap)(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
     int (*kem_decap)(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
+    int (*dsa_keypair)(uint8_t *pk, uint8_t *sk);
+    /*
+     * ML-DSA sign/verify carry the FIPS 204 context string (D-PQ-1): kex/ passes
+     * ctx = INFO("prekey").  Sig-first, matching the classical sign/verify slots
+     * and gy_mldsa_sign/verify so the wrappers assign with no adapter.
+     */
     int (*dsa_sign)(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
-                    size_t msg_len);
+                    size_t msg_len, const uint8_t *ctx, size_t ctxlen);
     int (*dsa_verify)(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg,
-                      size_t msg_len);
+                      size_t msg_len, const uint8_t *ctx, size_t ctxlen);
 };
 
 /*

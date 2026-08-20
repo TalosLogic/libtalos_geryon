@@ -1,0 +1,285 @@
+(* formal/models/x3dh_secrecy.pv
+ *
+ * Hybrid X3DH handshake (HYBRID_SPEC §6): SK secrecy and
+ * parameter agreement. Realizes D-FM-4 queries 1, 2, and 4. Consumes
+ * formal/lib/geryon.pvl and only that.
+ *
+ * Structure (BJKS): honest identities are generated under replication and
+ * registered in a table; the network is the attacker (the untrusted
+ * server is just the public channel); each key class offers an
+ * event-gated compromise (the library's Compromise*Key macros); BrokenDH
+ * and BrokenKEM are always reachable, so every query is event-conditioned
+ * and states exactly which compromise set defeats it (D-FM-2). The
+ * "quantum attacker" is the sub-trace where BrokenDHev
+ * fires.
+ *
+ * HYBRID_SPEC sections modeled: §5.2 (dual-signed prekey over the
+ *   (curve_pk, mlkem_ek) pairing), §6.1/6.3/6.4 (DH1..4, per-key HDH
+ *   fusion, F prefix, SK), §6.5 (initial message + ik_id check), §6.6/6.7
+ *   (hybrid_flag, AD_first). Register decisions: D-FM-1, D-FM-2, D-FM-4.
+ *
+ * Abstractions (noted per the M4 plan convention, all justified):
+ *   - Single suite constant su_h25519_512. The models are parameter-
+ *     independent (D-FM-4 amendment): swapping the suite constant covers
+ *     h448_1024, so one suite proves both.
+ *   - Signed `flags` bytes are opaque (`new flags`). The interval-range
+ *     admissibility check (§5.3, min<=iv<=max) needs order relations
+ *     ProVerif lacks; interval AGREEMENT is what the query tests, and it
+ *     is carried by hybrid_flag inside AD_first (§6.7), which is what the
+ *     model binds.
+ *   - PKIDs are HASH(encodeEC(curve_pk)) rather than the §3.3 4-byte
+ *     truncation; truncation has no symbolic content (identifiers only).
+ *
+ * Queries and expected verdicts (see formal/README.md for the
+ * defeating-set prose; FIRST CUT - the disjunctions are tightened toward
+ * minimal during prover iteration):
+ *   1. attacker(skwitness) ==> (a compromise/broken event)   : proved
+ *   2. ResponderAccepted(p) ==> InitiatorStarted(p)           : proved
+ *   3. attacker(reached_opk)   (both-branch reachability)     : attack
+ *   4. attacker(reached_noopk) (both-branch reachability)     : attack
+ * Expected runtime on the CI runner class: seconds (budget 120 s).
+ *)
+
+(* OPK-present vs OPK-absent bundle field. *)
+type opkopt.
+fun opk_some(point, kempub): opkopt [data].
+const opk_none: opkopt.
+
+(* Honest identity registry: an identity is honest iff its public triple
+ * is in this table. *)
+table honestIK(point, kempub, mldsapub).
+
+(* Alice's first-message plaintext: the SK-secrecy witness. It is only
+ * ever sent AEAD-encrypted under a key derived from SK, and only to an
+ * honest, table-registered Bob, so it leaks iff the attacker recovers
+ * that session's SK. *)
+free skwitness: bitstring [private].
+
+(* Non-vacuity witnesses: a responder outputs the matching one only when
+ * it accepts, proving each branch (OPK / no-OPK) is genuinely reachable. *)
+free reached_opk:   bitstring [private].
+free reached_noopk: bitstring [private].
+
+(* --- Query 1/2: SK secrecy, compromise-conditioned (D-FM-4.1, 4.2) ---
+ * FIRST CUT: skwitness stays secret unless the attacker broke a curve or
+ * KEM key (directly, or via BrokenDH/BrokenKEM), or forged Bob's prekey
+ * signature (needs his ML-DSA identity key). Tighten to the minimal set
+ * per-defeating during iteration. *)
+query c: point, k: kempub, d: mldsapub;
+    attacker(skwitness) ==>
+        event(BrokenDHev)
+        || event(BrokenKEMev)
+        || event(CompromiseCurve(c))
+        || event(CompromiseKEM(k))
+        || event(CompromiseMLDSA(d)).
+
+(* --- Query 4: parameter agreement (D-FM-4.4) ---
+ * When Bob accepts a session from an honest Alice (Serve is gated on
+ * honest registration), they agree on (suite, interval, aead) and both
+ * identities. Only those are AD_first-bound (§6.7); spk_id/opk_id are NOT
+ * in the AD, so the correspondence leaves them free (independent vars on
+ * each side). The residual: an attacker holding Alice's IK curve key, or
+ * a quantum attacker (BrokenDH), can forge her first flight - so those
+ * are the pre-named defeating events (HYBRID_SPEC §10.8). ea/eb =
+ * encodeEC of the IK curve keys; the 6th arg is Bob's SPK curve key.
+ * DH1 = DH(IK_A, SPK_B) is the sole initiator-authenticating value, so
+ * the exact defeating set is {IK_A curve, SPK_B curve, BrokenDH}. *)
+query su: suite, iv: interval, ae: aead, xa: point, zs: point,
+      eb: bitstring, op: bitstring, sp2: bitstring, op2: bitstring;
+    event(ResponderAccepted(su, iv, ae, encodeEC(xa), eb, encodeEC(zs), op)) ==>
+        event(InitiatorStarted(su, iv, ae, encodeEC(xa), eb, sp2, op2))
+        || event(CompromiseCurve(xa))
+        || event(CompromiseCurve(zs))
+        || event(BrokenDHev).
+
+(* --- Query 3: both branches reachable (acceptance criterion 3) --- *)
+query attacker(reached_opk).
+query attacker(reached_noopk).
+
+(* ====================================================================
+ * Initiator (Alice). Fetches a bundle from the untrusted network, binds
+ * the SPK to Bob's honest identity signature, runs the handshake, and
+ * sends skwitness as the first-message plaintext.
+ * ================================================================== *)
+let Initiator(iksk_a: scalar, ike_a: kempub, ikd_a: mldsapub, ikc_a: point) =
+    in(pub, (ikc_b: point, ike_b: kempub, ikd_b: mldsapub,
+             spkc_b: point, spke_b: kempub,
+             sd: bitstring, ed: bitstring, md: bitstring,
+             opk: opkopt, iv: interval, ae: aead));
+    (* Bob must be an honest, registered identity. *)
+    get honestIK(=ikc_b, =ike_b, =ikd_b) in
+    (* SPK must be dual-signed by that identity over its own bytes. *)
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    let signed_data(ppair(=spkc_b, =spke_b), ts, flags) = sd in
+    if prekey_ok(ikc_b, ikd_b, sd, ctx, ed, md) then
+    (* Handshake (§6.1, §6.3). *)
+    new eksk: scalar;
+    let ekc = smul(eksk, gen) in
+    let dh1 = ecdh(iksk_a, spkc_b) in
+    let dh2 = ecdh(eksk,   ikc_b) in
+    let dh3 = ecdh(eksk,   spkc_b) in
+    let (ct_ik:  bitstring, kem_ik:  bitstring) = pqkem_enc(ike_b) in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spke_b) in
+    let h1 = hdh(kem_spk, dh1) in
+    let h2 = hdh(kem_ik,  dh2) in
+    let h3 = hdh(kem_spk, dh3) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in   (* AD identity hash (§6.7) *)
+    let hb = ikhash(ikc_b, ike_b, ikd_b) in
+    let ea = encodeEC(ikc_a) in               (* event identity handle    *)
+    let eb = encodeEC(ikc_b) in
+    let hf = hflag(iv, ae) in
+    let adf = ad_frst(ha, hb, hf) in
+    let ik_id_b = HASH(encodeEC(ikc_b)) in
+    let spk_id  = HASH(encodeEC(spkc_b)) in
+    (* OPK-present and OPK-absent branches (§6.1). *)
+    let opk_some(opkc_b, opke_b) = opk in (
+        (* 4-DH path *)
+        let dh4 = ecdh(eksk, opkc_b) in
+        let (ct_opk: bitstring, kem_opk: bitstring) = pqkem_enc(opke_b) in
+        let h4 = hdh(kem_opk, dh4) in
+        let sk = x3dh_sk4(su_h25519_512, h1, h2, h3, h4) in
+        let k  = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+        let opk_id = HASH(encodeEC(opkc_b)) in
+        event InitiatorStarted(su_h25519_512, iv, ae, ea, eb, spk_id, opk_id);
+        out(pub, (ikc_a, ike_a, ikd_a, ekc, ct_ik, ct_spk, ct_opk,
+                  ik_id_b, spk_id, opk_id, hf, aead_enc(k, adf, skwitness)))
+    ) else (
+        (* 3-DH path (no OPK) *)
+        let sk = x3dh_sk3(su_h25519_512, h1, h2, h3) in
+        let k  = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+        let opk_id = zeros in
+        event InitiatorStarted(su_h25519_512, iv, ae, ea, eb, spk_id, opk_id);
+        out(pub, (ikc_a, ike_a, ikd_a, ekc, ct_ik, ct_spk, zeros,
+                  ik_id_b, spk_id, opk_id, hf, aead_enc(k, adf, skwitness)))
+    ).
+
+(* ====================================================================
+ * Responder (Bob) common tail: given a received initial message and Bob's
+ * own key material, recompute SK, enforce ik_id and parameter agreement,
+ * decrypt, then emit ResponderAccepted and the branch witness.
+ * ================================================================== *)
+let ServeNoOPK(iksk: scalar, ikkem: kempriv, spksk: scalar, spkkem: kempriv,
+               ikc: point, ike: kempub, ikd: mldsapub, spkc: point,
+               iv: interval, ae: aead) =
+    in(pub, (ikc_a: point, ike_a: kempub, ikd_a: mldsapub, ekc: point,
+             ct_ik: bitstring, ct_spk: bitstring, ct_opk: bitstring,
+             ik_id_b: bitstring, spk_id: bitstring, opk_id: bitstring,
+             hf: bitstring, ctext: bitstring));
+    let my_ik_id = HASH(encodeEC(ikc)) in
+    if ik_id_b = my_ik_id then
+    (* Agreement is a property between honest parties: accept only from a
+     * registered honest initiator. *)
+    get honestIK(=ikc_a, =ike_a, =ikd_a) in
+    let hflag(=iv, =ae) = hf in           (* parameter agreement (§6.7) *)
+    let kem_ik  = pdec(ikkem,  ct_ik)  in
+    let kem_spk = pdec(spkkem, ct_spk) in
+    let dh1 = ecdh(spksk, ikc_a) in
+    let dh2 = ecdh(iksk,  ekc)   in
+    let dh3 = ecdh(spksk, ekc)   in
+    let h1 = hdh(kem_spk, dh1) in
+    let h2 = hdh(kem_ik,  dh2) in
+    let h3 = hdh(kem_spk, dh3) in
+    let sk = x3dh_sk3(su_h25519_512, h1, h2, h3) in
+    let k  = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc, ike, ikd) in
+    let ea = encodeEC(ikc_a) in
+    let eb = encodeEC(ikc) in
+    let adf = ad_frst(ha, hb, hf) in
+    let plain = aead_dec(k, adf, ctext) in
+    (* The 6th event arg is Bob's OWN SPK curve pubkey (not the malleable
+     * spk_id from the message), so the agreement query can name its
+     * compromise precisely (§10.8 defeating set). *)
+    event ResponderAccepted(su_h25519_512, iv, ae, ea, eb,
+                            encodeEC(smul(spksk, gen)), opk_id);
+    out(pub, reached_noopk).
+
+let ServeOPK(iksk: scalar, ikkem: kempriv, spksk: scalar, spkkem: kempriv,
+             opksk: scalar, opkkem: kempriv, ikc: point, ike: kempub,
+             ikd: mldsapub, spkc: point, opkc: point,
+             iv: interval, ae: aead) =
+    in(pub, (ikc_a: point, ike_a: kempub, ikd_a: mldsapub, ekc: point,
+             ct_ik: bitstring, ct_spk: bitstring, ct_opk: bitstring,
+             ik_id_b: bitstring, spk_id: bitstring, opk_id: bitstring,
+             hf: bitstring, ctext: bitstring));
+    let my_ik_id = HASH(encodeEC(ikc)) in
+    if ik_id_b = my_ik_id then
+    get honestIK(=ikc_a, =ike_a, =ikd_a) in
+    let hflag(=iv, =ae) = hf in
+    let kem_ik  = pdec(ikkem,  ct_ik)  in
+    let kem_spk = pdec(spkkem, ct_spk) in
+    let kem_opk = pdec(opkkem, ct_opk) in
+    let dh1 = ecdh(spksk, ikc_a) in
+    let dh2 = ecdh(iksk,  ekc)   in
+    let dh3 = ecdh(spksk, ekc)   in
+    let dh4 = ecdh(opksk, ekc)   in
+    let h1 = hdh(kem_spk, dh1) in
+    let h2 = hdh(kem_ik,  dh2) in
+    let h3 = hdh(kem_spk, dh3) in
+    let h4 = hdh(kem_opk, dh4) in
+    let sk = x3dh_sk4(su_h25519_512, h1, h2, h3, h4) in
+    let k  = HKDF(sk, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    let ha = ikhash(ikc_a, ike_a, ikd_a) in
+    let hb = ikhash(ikc, ike, ikd) in
+    let ea = encodeEC(ikc_a) in
+    let eb = encodeEC(ikc) in
+    let adf = ad_frst(ha, hb, hf) in
+    let plain = aead_dec(k, adf, ctext) in
+    event ResponderAccepted(su_h25519_512, iv, ae, ea, eb,
+                            encodeEC(smul(spksk, gen)), opk_id);
+    out(pub, reached_opk).
+
+(* ====================================================================
+ * Responder driver: mint a signed SPK, publish a bundle in each of the
+ * two OPK modes, offer compromise of every prekey half.
+ * ================================================================== *)
+let Responder(iksk: scalar, ikkem: kempriv, ikdsa: mldsapriv,
+              ikc: point, ike: kempub, ikd: mldsapub) =
+    new spksk: scalar; new spkkem: kempriv;
+    new ts: bitstring; new flags: bitstring; new iv: interval;
+    let ae = ae_chacha in
+    let spkc = smul(spksk, gen) in
+    let spke = kempk(spkkem) in
+    let sd  = signed_data(ppair(spkc, spke), ts, flags) in
+    let ed  = xeddsa_sign(iksk, sd) in
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    let md  = mldsa_sign(ikdsa, sd, ctx) in
+    (
+        CompromiseCurveKey(spksk) | CompromiseKEMKey(spkkem)
+      | ( (* WITH OPK *)
+          new opksk: scalar; new opkkem: kempriv;
+          let opkc = smul(opksk, gen) in
+          let opke = kempk(opkkem) in
+          out(pub, (ikc, ike, ikd, spkc, spke, sd, ed, md,
+                    opk_some(opkc, opke), iv, ae));
+          ( CompromiseCurveKey(opksk) | CompromiseKEMKey(opkkem)
+          | ServeOPK(iksk, ikkem, spksk, spkkem, opksk, opkkem,
+                     ikc, ike, ikd, spkc, opkc, iv, ae) ) )
+      | ( (* WITHOUT OPK *)
+          out(pub, (ikc, ike, ikd, spkc, spke, sd, ed, md,
+                    opk_none, iv, ae));
+          ServeNoOPK(iksk, ikkem, spksk, spkkem,
+                     ikc, ike, ikd, spkc, iv, ae) )
+    ).
+
+(* ====================================================================
+ * Honest party: generate an identity, register it, publish it, offer
+ * identity-key compromise, and run both roles.
+ * ================================================================== *)
+let Party() =
+    new iksk: scalar; new ikkem: kempriv; new ikdsa: mldsapriv;
+    let ikc = smul(iksk, gen) in
+    let ike = kempk(ikkem) in
+    let ikd = mldsapk(ikdsa) in
+    insert honestIK(ikc, ike, ikd);
+    out(pub, (ikc, ike, ikd));
+    (
+        CompromiseCurveKey(iksk)
+      | CompromiseKEMKey(ikkem)
+      | CompromiseMLDSAKey(ikdsa)
+      | !Responder(iksk, ikkem, ikdsa, ikc, ike, ikd)
+      | !Initiator(iksk, ike, ikd, ikc)
+    ).
+
+process
+    ( !Party() | !BrokenDH() | !BrokenKEM() )

@@ -174,6 +174,77 @@ gy_op_load_device(struct gy_op *op, const uint8_t *id, size_t id_len,
 }
 
 int
+gy_op_load_hybrid_device(struct gy_op *op, const uint8_t *id, size_t id_len,
+                         struct gy_hybrid_device_record *out, int *found)
+{
+    size_t n = 0;
+    int rc;
+
+    if (op == NULL || id == NULL || out == NULL || found == NULL)
+        return GY_ERR_ARG;
+    OP_ENTER(op);
+    *found = 0;
+    rc = op_load(op, GY_REC_DEVICE, id, id_len, &n);
+    if (rc != GY_OK)
+        return rc;
+    if (n == 0)
+        return GY_OK;
+    rc = gy_hybrid_device_record_decode(out, op->scratch, n);
+    if (rc != GY_OK)
+        return rc;
+    *found = 1;
+    return GY_OK;
+}
+
+int
+gy_op_load_device_any(struct gy_op *op, const uint8_t *id, size_t id_len,
+                      struct gy_hybrid_device_record *out, int *is_hybrid,
+                      int *found)
+{
+    const struct gy_suite_desc *d;
+    size_t n = 0;
+    int rc;
+
+    if (op == NULL || id == NULL || out == NULL || found == NULL)
+        return GY_ERR_ARG;
+    OP_ENTER(op);
+    *found = 0;
+    if (is_hybrid != NULL)
+        *is_hybrid = 0; /* NULL for read-only callers that never re-store */
+    rc = op_load(op, GY_REC_DEVICE, id, id_len, &n);
+    if (rc != GY_OK)
+        return rc;
+    if (n == 0)
+        return GY_OK;
+    if (n < 3)
+        return GY_ERR_ARG;
+    d = gy_suite_desc(op->scratch[2]); /* blob = fmt || reserved || suite_id */
+    if (d == NULL)
+        return GY_ERR_ARG;
+    if (d->is_hybrid) {
+        rc = gy_hybrid_device_record_decode(out, op->scratch, n);
+        if (is_hybrid != NULL)
+            *is_hybrid = 1;
+    } else {
+        gy_secure_zero(out, sizeof(*out));
+        rc = gy_device_record_decode(&out->base, op->scratch, n);
+    }
+    if (rc != GY_OK)
+        return rc;
+    *found = 1;
+    return GY_OK;
+}
+
+int
+gy_op_put_device_any(struct gy_op *op, const struct gy_hybrid_device_record *d,
+                     int is_hybrid, const uint8_t *key, size_t key_len)
+{
+    if (is_hybrid)
+        return gy_op_put_hybrid_device(op, d, key, key_len);
+    return gy_op_put_device(op, &d->base, key, key_len);
+}
+
+int
 gy_op_load_session(struct gy_op *op, const uint8_t id[GY_SESSION_ID_LEN],
                    struct gy_session *out, int *found)
 {
@@ -265,6 +336,26 @@ gy_op_put_device(struct gy_op *op, const struct gy_device_record *d,
         return GY_ERR_ARG;
     OP_ENTER(op);
     rc = gy_device_record_encode(blob, sizeof(blob), &n, d);
+    if (rc != GY_OK)
+        return rc;
+    return put_rec(op, GY_REC_DEVICE, key, key_len, blob, n);
+}
+
+int
+gy_op_put_hybrid_device(struct gy_op *op,
+                        const struct gy_hybrid_device_record *d,
+                        const uint8_t *key, size_t key_len)
+{
+    uint8_t blob[GY_HYBRID_DEVICE_BLOB_MAX];
+    size_t n;
+    int rc;
+
+    if (op == NULL || d == NULL || key == NULL)
+        return GY_ERR_ARG;
+    if (key_len == 0 || key_len > GY_DEVICE_ID_MAX)
+        return GY_ERR_ARG;
+    OP_ENTER(op);
+    rc = gy_hybrid_device_record_encode(blob, sizeof(blob), &n, d);
     if (rc != GY_OK)
         return rc;
     return put_rec(op, GY_REC_DEVICE, key, key_len, blob, n);

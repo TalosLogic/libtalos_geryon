@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 #include "double_ratchet.h"
+#include "hybrid_double_ratchet.h"
 
 #define GY_SIM_MAX_OPK 4
 
@@ -109,5 +110,111 @@ int gy_sim_corrupt(uint8_t *frame, size_t flen, enum gy_sim_field field);
 /* Zeroizing teardown. */
 void gy_sim_free(struct gy_sim *sim);
 void gy_sim_initiator_free(struct gy_sim_initiator *init);
+
+/* ------------------------------------------------------------------------- *
+ * Hybrid two-party simulator (HYBRID_SPEC).  The hybrid analogue of the
+ * classical sim above: it drives the hybrid X3DH handshake, the KEM
+ * confirmation, and the hybrid Double Ratchet, carrying the first frame with
+ * the handshake, committing OPK deletion only after that frame decrypts
+ * (D-X3DH-10), and base-key deduping re-sent initial messages.  Real primitives
+ * throughout (no fixed seams): the sim exercises behavior, not byte KATs.
+ * ------------------------------------------------------------------------- */
+
+/* Largest hybrid initial message: prefix || first hybrid DR frame. */
+#define GY_SIM_HYBRID_MSG_MAX                                                  \
+    (GY_HYBRID_X3DH_PREFIX_MAX + GY_DR_HYBRID_HEADER_MAX + 512 +               \
+     GY_AEAD_MAX_TAG)
+
+/* Responder (Bob): hybrid identity, prekeys, OPK stock, and its one session. */
+struct gy_sim_hybrid {
+    const struct gy_suite_desc *desc;
+    uint8_t aead_id;
+    uint32_t interval; /* negotiated ML-KEM refresh interval */
+
+    struct gy_hybrid_identity_keypair bob_ik;
+    struct gy_hybrid_signed_prekey bob_spk;
+    struct gy_hybrid_keypair opk_stock[GY_SIM_MAX_OPK];
+    size_t opk_count;
+    struct gy_hybrid_prekey_bundle bundle;
+
+    struct gy_hybrid_dr_state bob_dr;
+    int bob_up;
+    uint8_t
+        base[2 * GY_CURVE_PK_MAX]; /* IK_A || EK_A curve of the live session */
+    int have_base;
+
+    uint8_t ad[GY_HYBRID_AD_MAX];
+    size_t adl;
+};
+
+/* Initiator (Alice): a fresh hybrid identity/ephemeral and its own DR state.
+ * ik carries Alice's identity ML-KEM dk, needed to open Bob's confirmation. */
+struct gy_sim_hybrid_initiator {
+    const struct gy_suite_desc *desc;
+    uint8_t aead_id;
+    uint32_t interval;
+    struct gy_hybrid_identity_keypair ik;
+    struct gy_keypair ek;
+    struct gy_hybrid_dr_state dr;
+    int up;
+    uint8_t ad[GY_HYBRID_AD_MAX];
+    size_t adl;
+};
+
+/*
+ * Set up the responder: generate its hybrid identity and signed prekey (its SPK
+ * advertises intervals 1..100 and aead_id), optionally a one-time prekey, and
+ * publish the hybrid bundle.  Returns GY_OK or a GY_ERR_*.
+ */
+int gy_sim_hybrid_setup(struct gy_sim_hybrid *sim,
+                        const struct gy_suite_desc *desc, uint8_t aead_id,
+                        uint32_t interval, int with_opk);
+
+/*
+ * Initiator side: create a fresh Alice bound to sim's bundle, run hybrid X3DH,
+ * start her hybrid DR, and assemble the initial message (prefix || first hybrid
+ * DR frame carrying pt).  Returns GY_OK or a GY_ERR_*.
+ */
+int gy_sim_hybrid_start(struct gy_sim_hybrid_initiator *init,
+                        const struct gy_sim_hybrid *sim, uint8_t *out,
+                        size_t cap, size_t *outlen, const uint8_t *pt,
+                        size_t ptlen);
+
+/*
+ * Responder side: process a hybrid initial message.  On a base-key match it
+ * routes to the live session (a consumed first frame no longer decrypts).
+ * Otherwise hybrid X3DH responds, a pending hybrid DR is built (confirming to
+ * Alice's identity ML-KEM ek), and the first frame is decrypted; ONLY on
+ * success is the session committed and the consumed OPK deleted (D-X3DH-10).
+ * Returns GY_OK, or the handshake/decrypt error (OPK retained on any failure).
+ */
+int gy_sim_hybrid_bob_recv_initial(struct gy_sim_hybrid *sim,
+                                   const uint8_t *msg, size_t msglen,
+                                   uint8_t *out, size_t cap, size_t *outlen);
+
+/*
+ * Per-field corruption for the hybrid frame tamper matrix.  MLKEM_EK / KEM_CT /
+ * FLAGS address the cleartext hybrid X3DH INITIAL prefix; CONFIRM_CT addresses
+ * the encrypted header of Bob's first ratchet REPLY (confirm_ct is header-
+ * encrypted on the wire, so this flips a byte in that enc_header region).  The
+ * caller passes the frame the field belongs to.
+ */
+enum gy_sim_hybrid_field {
+    GY_SIM_HF_MLKEM_EK,  /* initial: Alice's identity ML-KEM ek (in IK_A) */
+    GY_SIM_HF_KEM_CT,    /* initial: ct_ik, the first per-DH KEM ciphertext */
+    GY_SIM_HF_FLAGS,     /* initial: hybrid_flag (reserved-bit byte) */
+    GY_SIM_HF_CONFIRM_CT /* reply: enc_header carrying confirm_ct */
+};
+
+/*
+ * Flip one byte in the named field.  Returns GY_OK, or GY_ERR_ARG if the frame
+ * is too short to hold the field.
+ */
+int gy_sim_hybrid_corrupt(const struct gy_suite_desc *desc, uint8_t *frame,
+                          size_t flen, enum gy_sim_hybrid_field field);
+
+/* Zeroizing teardown. */
+void gy_sim_hybrid_free(struct gy_sim_hybrid *sim);
+void gy_sim_hybrid_initiator_free(struct gy_sim_hybrid_initiator *init);
 
 #endif /* GY_SIM_H */

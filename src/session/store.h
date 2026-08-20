@@ -100,7 +100,9 @@ struct gy_op_rec {
     uint8_t id[GY_DEVICE_ID_MAX];
     size_t id_len;
     size_t blob_len;
-    uint8_t blob[GY_USER_BLOB_MAX]; /* the largest small-record blob */
+    /* Largest small-record blob: the hybrid DeviceRecord (curve + PQ identity)
+     * exceeds the UserRecord, so size to it. */
+    uint8_t blob[GY_HYBRID_DEVICE_BLOB_MAX];
 };
 
 /* A staged SessionRecord STORE (kept apart: its worst-case blob is large). */
@@ -154,6 +156,25 @@ int gy_op_load_user(struct gy_op *op, const uint8_t *id, size_t id_len,
                     struct gy_user_record *out, int *found);
 int gy_op_load_device(struct gy_op *op, const uint8_t *id, size_t id_len,
                       struct gy_device_record *out, int *found);
+/* Hybrid DeviceRecord load/put: identical staging to the classical pair, but
+ * decoding/encoding the composed record (base + PQ identity). */
+int gy_op_load_hybrid_device(struct gy_op *op, const uint8_t *id, size_t id_len,
+                             struct gy_hybrid_device_record *out, int *found);
+/*
+ * Suite-agnostic DeviceRecord list load/put for the steady-state session-list
+ * operations (insert/activate) and the receive/send readers, which must not
+ * care whether the peer is classical or hybrid.  load peeks the stored blob's
+ * suite byte and decodes the right record type into `out` (a classical record
+ * lands in out->base with the PQ fields zero), reporting which in *is_hybrid;
+ * put re-encodes with the matching codec so a hybrid record's PQ identity is
+ * preserved across a list mutation.
+ */
+int gy_op_load_device_any(struct gy_op *op, const uint8_t *id, size_t id_len,
+                          struct gy_hybrid_device_record *out, int *is_hybrid,
+                          int *found);
+int gy_op_put_device_any(struct gy_op *op,
+                         const struct gy_hybrid_device_record *d, int is_hybrid,
+                         const uint8_t *key, size_t key_len);
 int gy_op_load_session(struct gy_op *op, const uint8_t id[GY_SESSION_ID_LEN],
                        struct gy_session *out, int *found);
 
@@ -171,6 +192,9 @@ int gy_op_put_user(struct gy_op *op, const struct gy_user_record *u);
  */
 int gy_op_put_device(struct gy_op *op, const struct gy_device_record *d,
                      const uint8_t *key, size_t key_len);
+int gy_op_put_hybrid_device(struct gy_op *op,
+                            const struct gy_hybrid_device_record *d,
+                            const uint8_t *key, size_t key_len);
 int gy_op_put_session(struct gy_op *op, const struct gy_session *s);
 
 /* Defer a record deletion / an OPK consumption until the commit's phase two. */

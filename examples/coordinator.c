@@ -15,18 +15,27 @@
 #include "demo_ipc.h"
 #include "demo_proto.h"
 
-/* Per-client directory storage bounds (all opaque public bytes). */
-#define COORD_REG_MAX 1024
-#define COORD_BATCH_MAX 8192
-#define COORD_BUNDLE_MAX 1024
+/*
+ * Per-client directory storage bounds (all opaque public bytes).  These are
+ * sized for the LARGER hybrid suite (geryon_h25519_512): an ML-KEM-512 ek is
+ * 800 bytes and an ML-DSA-44 public key 1312 / signature 2420, so a hybrid
+ * registration, bundle, message, or certificate runs to several KB where the
+ * classical equivalents are a few hundred bytes.  The coordinator relays and
+ * stores whatever the clients publish, so its caps track the client-side
+ * CLIENT_*_MAX values; the extra static storage is harmless for the classical
+ * demo.
+ */
+#define COORD_REG_MAX 16384
+#define COORD_BATCH_MAX 16384
+#define COORD_BUNDLE_MAX 8192
 #define COORD_MAX_CONSUMED 128
 
 /* Mailbox bounds and the seeded out-of-order delivery schedule. */
 #define COORD_MAILBOX_MAX 8
-#define COORD_MSG_MAX 2048
+#define COORD_MSG_MAX 8192
 
-/* Published SAK certificate. */
-#define COORD_CERT_MAX 512
+/* Published SAK certificate (hybrid: ML-DSA public key plus dual signature). */
+#define COORD_CERT_MAX 8192
 
 /* Published self-fingerprint; GY_FINGERPRINT_MAX bounds it. */
 #define COORD_FP_MAX 64

@@ -31,8 +31,12 @@ gy_recv_ctx_init(struct gy_recv_ctx *c, const struct gy_store *store,
                  const struct gy_expiry_cfg *expiry, gy_recv_clock_fn clock,
                  void *clock_ctx)
 {
-    if (c == NULL || store == NULL || desc == NULL || local_ik == NULL ||
-        spks == NULL || n_spks == 0)
+    if (c == NULL || store == NULL || desc == NULL)
+        return GY_ERR_ARG;
+    /* local_ik/spks may be NULL for a hybrid-suite context: the hybrid responder
+     * material is passed per-call to gy_hybrid_recv, and the steady-state DR
+     * path uses no responder identity (it dispatches on the session suite). */
+    if ((spks == NULL) != (n_spks == 0))
         return GY_ERR_ARG;
     if (opks == NULL && n_opks != 0)
         return GY_ERR_ARG;
@@ -74,6 +78,28 @@ session_position(const struct gy_device_record *d,
 }
 
 /*
+ * Decrypt on a session, dispatching to the hybrid or classical engine by the
+ * session's own suite and mirroring the hybrid PQ-auth state into the record.
+ */
+static int
+sess_decrypt(struct gy_session *s, uint8_t *out, size_t cap, size_t *n,
+             const uint8_t *frame, size_t frame_len, int *matched)
+{
+    int rc;
+
+    if (s->ratchet.base.desc->is_hybrid) {
+        rc = gy_hybrid_dr_decrypt_assoc(&s->ratchet, out, cap, n, frame,
+                                        frame_len, s->ad, s->ad_len, matched);
+        if (rc == GY_OK)
+            s->pq_pending = s->ratchet.pq_state;
+    } else {
+        rc = gy_dr_decrypt_assoc(&s->ratchet.base, out, cap, n, frame,
+                                 frame_len, s->ad, s->ad_len, matched);
+    }
+    return rc;
+}
+
+/*
  * Run one candidate session against a DR frame.  On a header match that then
  * verifies, stages the advanced session (and its activation if it was
  * inactive), sets *out_len, and returns GY_OK with *owned = 1.  On a header
@@ -99,8 +125,7 @@ try_session(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
     if (!found)
         return GY_ERR_VERIFY; /* dangling id: treat as no match */
 
-    rc = gy_dr_decrypt_assoc(&s.dr, out, cap, &n, frame, frame_len, s.ad,
-                             s.ad_len, &matched);
+    rc = sess_decrypt(&s, out, cap, &n, frame, frame_len, &matched);
     if (!matched) {
         gy_session_free(&s);
         return GY_ERR_VERIFY; /* continue to the next candidate */
@@ -133,7 +158,7 @@ recv_dr(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
         const uint8_t *device_id, size_t device_id_len, const uint8_t *frame,
         size_t frame_len, uint8_t *out, size_t cap, size_t *out_len)
 {
-    struct gy_device_record dev;
+    struct gy_hybrid_device_record dev;
     uint8_t dk[GY_DEVKEY_LEN];
     uint32_t i;
     int found, owned, rc;
@@ -141,36 +166,36 @@ recv_dr(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
     rc = gy_devrec_key(user_id, user_id_len, device_id, device_id_len, dk);
     if (rc != GY_OK)
         return rc;
-    rc = gy_op_load_device(&c->op, dk, GY_DEVKEY_LEN, &dev, &found);
+    rc = gy_op_load_device_any(&c->op, dk, GY_DEVKEY_LEN, &dev, NULL, &found);
     if (rc != GY_OK)
         return rc;
     if (!found) {
-        gy_device_record_free(&dev);
+        gy_hybrid_device_record_free(&dev);
         return GY_ERR_VERIFY;
     }
 
     /* Active session first, then inactive in list order (D-SES-6.3). */
-    if (dev.has_active) {
+    if (dev.base.has_active) {
         c->last_sessions_tried++;
         rc = try_session(c, user_id, user_id_len, device_id, device_id_len,
-                         dev.active, 0, frame, frame_len, out, cap, out_len,
-                         &owned);
-        if (owned) {
-            gy_device_record_free(&dev);
-            return rc;
-        }
-    }
-    for (i = 0; i < dev.n_inactive; i++) {
-        c->last_sessions_tried++;
-        rc = try_session(c, user_id, user_id_len, device_id, device_id_len,
-                         dev.inactive[i], 1, frame, frame_len, out, cap,
+                         dev.base.active, 0, frame, frame_len, out, cap,
                          out_len, &owned);
         if (owned) {
-            gy_device_record_free(&dev);
+            gy_hybrid_device_record_free(&dev);
             return rc;
         }
     }
-    gy_device_record_free(&dev);
+    for (i = 0; i < dev.base.n_inactive; i++) {
+        c->last_sessions_tried++;
+        rc = try_session(c, user_id, user_id_len, device_id, device_id_len,
+                         dev.base.inactive[i], 1, frame, frame_len, out, cap,
+                         out_len, &owned);
+        if (owned) {
+            gy_hybrid_device_record_free(&dev);
+            return rc;
+        }
+    }
+    gy_hybrid_device_record_free(&dev);
     return GY_ERR_VERIFY; /* nothing matched: uniform not-found */
 }
 
@@ -280,7 +305,8 @@ recv_init(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
         rc = GY_ERR_VERIFY; /* uniform: no handshake/prekey oracle */
         goto out;
     }
-    rc = gy_dr_init_bob(&s.dr, desc, c->aead_id, &secrets, matched_spk);
+    rc = gy_dr_init_bob(&s.ratchet.base, desc, c->aead_id, &secrets,
+                        matched_spk);
     if (rc != GY_OK) {
         rc = GY_ERR_VERIFY;
         goto out;
@@ -294,8 +320,8 @@ recv_init(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
     }
 
     /* First frame must decrypt BEFORE anything commits (D-X3DH-10). */
-    rc = gy_dr_decrypt(&s.dr, out, cap, &n, inner + prefix_len, ctlen, s.ad,
-                       s.ad_len);
+    rc = gy_dr_decrypt(&s.ratchet.base, out, cap, &n, inner + prefix_len, ctlen,
+                       s.ad, s.ad_len);
     if (rc != GY_OK) {
         rc = GY_ERR_VERIFY; /* OPK retained: the deferred consume never runs */
         goto out;
@@ -372,6 +398,228 @@ gy_recv(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
         return rc;
     rc = recv_process(c, user_id, user_id_len, device_id, device_id_len, msg,
                       msg_len, out, *out_len, out_len);
+    if (rc == GY_OK)
+        rc = gy_op_commit(&c->op);
+    else
+        gy_op_abort(&c->op);
+    return rc;
+}
+
+/* ---- hybrid receive (section 6) ---------------------------------------- */
+
+/* Length of a hybrid X3DH prefix (section 6.5); the first DR frame follows. */
+static size_t
+hybrid_prefix_len(const struct gy_suite_desc *desc)
+{
+    size_t cpl = desc->curve_pk_len;
+
+    return 2 + (4 + 1 + cpl + desc->kem_pk_len + desc->dsa_pk_len) +
+           (4 + 1 + cpl) + 3 * desc->kem_ct_len + 12 + 4;
+}
+
+/* Parse IK_A (full hybrid identity) and EK_A (curve) from a hybrid prefix. */
+static void
+hybrid_parse_base_keys(const struct gy_suite_desc *desc, const uint8_t *inner,
+                       struct gy_hybrid_identity_public_key *ika,
+                       struct gy_public_key *ekb)
+{
+    size_t cpl = desc->curve_pk_len;
+    size_t ekl = desc->kem_pk_len, dpl = desc->dsa_pk_len;
+    size_t ik_wire = 4 + 1 + cpl + ekl + dpl;
+    size_t o = 2;
+
+    memset(ika, 0, sizeof(*ika));
+    memset(ekb, 0, sizeof(*ekb));
+    ika->base.curve.pkid = gy_be32_get(inner + o);
+    ika->base.curve.curve_type = inner[o + 4];
+    memcpy(ika->base.curve.pk, inner + o + 5, cpl);
+    memcpy(ika->base.mlkem_ek, inner + o + 5 + cpl, ekl);
+    memcpy(ika->mldsa_pk, inner + o + 5 + cpl + ekl, dpl);
+    o += ik_wire;
+    ekb->pkid = gy_be32_get(inner + o);
+    ekb->curve_type = inner[o + 4];
+    memcpy(ekb->pk, inner + o + 5, cpl);
+}
+
+static int
+hybrid_recv_init(struct gy_recv_ctx *b,
+                 const struct gy_hybrid_identity_keypair *local_hik,
+                 const struct gy_hybrid_signed_prekey *hspks, size_t n_hspks,
+                 const struct gy_hybrid_keypair *hopks, size_t n_hopks,
+                 const uint8_t *user_id, size_t user_id_len,
+                 const uint8_t *device_id, size_t device_id_len,
+                 const uint8_t *inner, size_t inner_len, uint8_t *out,
+                 size_t cap, size_t *out_len)
+{
+    const struct gy_suite_desc *desc = b->desc;
+    struct gy_hybrid_identity_public_key ika;
+    struct gy_public_key ekb;
+    struct gy_dr_secrets secrets;
+    struct gy_hybrid_x3dh_local local;
+    struct gy_x3dh_opk_ref opk_ref;
+    struct gy_hybrid_device_record dev;
+    struct gy_session s;
+    const struct gy_hybrid_keypair *matched_spk;
+    uint8_t ad[GY_HYBRID_AD_MAX];
+    uint8_t dk[GY_DEVKEY_LEN];
+    uint8_t sid[GY_SESSION_ID_LEN];
+    uint32_t hflag = 0;
+    size_t prefix_len = hybrid_prefix_len(desc);
+    size_t adl = 0, frame_len, n = cap, i;
+    int found, owned, rc;
+
+    if (inner_len <= prefix_len)
+        return GY_ERR_VERIFY; /* need a non-empty first frame after the prefix */
+    frame_len = inner_len - prefix_len;
+
+    /* SessionID from the carried base key (IK_A, EK_A curve components). */
+    hybrid_parse_base_keys(desc, inner, &ika, &ekb);
+    memset(&s, 0, sizeof(s));
+    rc = gy_session_id(&s, desc, &ika.base.curve, &ekb);
+    if (rc != GY_OK)
+        return GY_ERR_VERIFY;
+    memcpy(sid, s.id, GY_SESSION_ID_LEN);
+
+    /* Base-key dedupe (D-SES-6.1): a known base routes to that session. */
+    rc = gy_devrec_key(user_id, user_id_len, device_id, device_id_len, dk);
+    if (rc != GY_OK)
+        return rc;
+    rc = gy_op_load_hybrid_device(&b->op, dk, GY_DEVKEY_LEN, &dev, &found);
+    if (rc != GY_OK)
+        return rc;
+    if (found) {
+        int pos = session_position(&dev.base, sid);
+
+        if (pos >= 0) {
+            gy_hybrid_device_record_free(&dev);
+            return try_session(b, user_id, user_id_len, device_id,
+                               device_id_len, sid, pos == 1, inner + prefix_len,
+                               frame_len, out, cap, out_len, &owned);
+        }
+    }
+    gy_hybrid_device_record_free(&dev);
+
+    /* Fresh base: record the FULL sender identity (TOFU / key-change). */
+    rc = gy_hybrid_conditional_update(&b->op, desc->suite_id, user_id,
+                                      user_id_len, device_id, device_id_len,
+                                      &ika, NULL);
+    if (rc != GY_OK)
+        return rc; /* GY_ERR_KEY_CHANGED surfaces; nothing staged */
+
+    local.ik = local_hik;
+    local.opks = hopks;
+    local.n_opks = n_hopks;
+    memset(&secrets, 0, sizeof(secrets));
+    memset(&opk_ref, 0, sizeof(opk_ref));
+    memset(&s, 0, sizeof(s));
+
+    /* Try the current hybrid SPK, then retained history (D-X3DH-5). */
+    matched_spk = NULL;
+    rc = GY_ERR_VERIFY;
+    for (i = 0; i < n_hspks; i++) {
+        local.spk = &hspks[i].kp;
+        local.spk_flags = hspks[i].flags;
+        rc = gy_hybrid_x3dh_respond(desc, &secrets, ad, &adl, &opk_ref, &hflag,
+                                    &local, inner, inner_len);
+        if (rc == GY_OK) {
+            matched_spk = &hspks[i].kp;
+            break;
+        }
+    }
+    if (rc != GY_OK) {
+        rc = GY_ERR_VERIFY; /* uniform: no handshake/prekey oracle */
+        goto out;
+    }
+
+    rc = gy_hybrid_dr_init_bob(&s.ratchet, desc,
+                               (uint8_t)((hflag >> 16) & 0xFF), &secrets,
+                               matched_spk, hflag & 0xFFFF, ika.base.mlkem_ek);
+    if (rc != GY_OK) {
+        rc = GY_ERR_VERIFY;
+        goto out;
+    }
+    memcpy(s.ad, ad, adl);
+    s.ad_len = (uint8_t)adl;
+    rc = gy_session_id(&s, desc, &ika.base.curve, &ekb);
+    if (rc != GY_OK) {
+        rc = GY_ERR_VERIFY;
+        goto out;
+    }
+
+    /* First frame must decrypt BEFORE anything commits (D-X3DH-10). */
+    rc = gy_hybrid_dr_decrypt(&s.ratchet, out, cap, &n, inner + prefix_len,
+                              frame_len, s.ad, s.ad_len);
+    if (rc != GY_OK) {
+        rc = GY_ERR_VERIFY; /* OPK retained: the deferred consume never runs */
+        goto out;
+    }
+    s.pq_pending = s.ratchet.pq_state;
+    s.nrecv = 1;
+    if (b->clock != NULL)
+        s.last_recv_at = recv_now(b);
+
+    rc = gy_op_put_session(&b->op, &s);
+    if (rc != GY_OK)
+        goto out;
+    rc = gy_device_insert_session(&b->op, user_id, user_id_len, device_id,
+                                  device_id_len, s.id);
+    if (rc != GY_OK)
+        goto out;
+    if (opk_ref.present)
+        rc = gy_op_consume_opk(&b->op, opk_ref.pkid);
+    if (rc == GY_OK)
+        *out_len = n;
+out:
+    gy_session_free(&s);
+    gy_secure_zero(&secrets, sizeof(secrets));
+    gy_secure_zero(ad, sizeof(ad));
+    return rc;
+}
+
+int
+gy_hybrid_recv(struct gy_recv_ctx *c,
+               const struct gy_hybrid_identity_keypair *local_hik,
+               const struct gy_hybrid_signed_prekey *hspks, size_t n_hspks,
+               const struct gy_hybrid_keypair *hopks, size_t n_hopks,
+               const uint8_t *user_id, size_t user_id_len,
+               const uint8_t *device_id, size_t device_id_len,
+               const uint8_t *msg, size_t msg_len, uint8_t *out,
+               size_t *out_len)
+{
+    const uint8_t *inner;
+    size_t inner_len;
+    int rc;
+
+    if (c == NULL || local_hik == NULL || hspks == NULL || n_hspks == 0 ||
+        user_id == NULL || device_id == NULL || msg == NULL || out_len == NULL)
+        return GY_ERR_ARG;
+    if (out == NULL) {
+        *out_len = msg_len;
+        return GY_OK;
+    }
+    if (msg_len < 3 || msg[0] != GY_WIRE_VERSION || msg[1] != c->desc->suite_id)
+        return GY_ERR_VERIFY;
+    inner = msg + 3;
+    inner_len = msg_len - 3;
+    if (inner_len < 2 || inner[0] != msg[0] || inner[1] != msg[1])
+        return GY_ERR_VERIFY;
+
+    c->last_sessions_tried = 0;
+    rc = gy_op_begin(&c->op, c->store);
+    if (rc != GY_OK)
+        return rc;
+
+    if (msg[2] == GY_MSG_INIT)
+        rc = hybrid_recv_init(c, local_hik, hspks, n_hspks, hopks, n_hopks,
+                              user_id, user_id_len, device_id, device_id_len,
+                              inner, inner_len, out, *out_len, out_len);
+    else if (msg[2] == GY_MSG_DR)
+        /* Steady-state DR: shared path, dispatches on the session's suite. */
+        rc = recv_dr(c, user_id, user_id_len, device_id, device_id_len, inner,
+                     inner_len, out, *out_len, out_len);
+    else
+        rc = GY_ERR_VERIFY;
+
     if (rc == GY_OK)
         rc = gy_op_commit(&c->op);
     else

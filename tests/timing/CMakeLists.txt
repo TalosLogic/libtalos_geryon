@@ -20,8 +20,11 @@ target_include_directories(geryon_dudect PRIVATE
 target_compile_options(geryon_dudect PRIVATE ${GERYON_WARNINGS})
 # geryon_ratchet resolves the DR/X3DH targets and re-exports geryon_kex +
 # geryon_core (the gy_* wrappers); sodium/monocypher back them, and libm
-# supplies sqrt() for the t-statistic (Linux needs -lm explicitly).
-target_link_libraries(geryon_dudect PRIVATE geryon_ratchet sodium monocypher)
+# supplies sqrt() for the t-statistic (Linux needs -lm explicitly).  oqs backs
+# the ML-KEM/ML-DSA the hybrid X3DH responder target reaches (it does not
+# propagate transitively through geryon_ratchet, same as the test harnesses).
+target_link_libraries(geryon_dudect PRIVATE geryon_ratchet sodium monocypher oqs)
+add_dependencies(geryon_dudect liboqs_build)
 if(NOT APPLE)
     target_link_libraries(geryon_dudect PRIVATE m)
 endif()

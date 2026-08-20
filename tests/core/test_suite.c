@@ -83,15 +83,15 @@ TEST(c25519_self_consistency)
     ASSERT_TRUE(d->dsa_verify == NULL, "dsa_verify NULL");
 }
 
-TEST(only_c25519_enabled)
+TEST(enabled_suites)
 {
     unsigned i;
 
-    /* 0x01 resolves; every other byte 0x00 and 0x02..0xFF is NULL. */
+    /* c25519 (0x01) and h25519_512 (0x02) resolve; every other byte is NULL. */
     for (i = 0; i <= 0xff; i++) {
         const struct gy_suite_desc *d = gy_suite_desc((uint8_t)i);
-        if (i == GY_SUITE_C25519)
-            ASSERT_TRUE(d != NULL, "c25519 enabled");
+        if (i == GY_SUITE_C25519 || i == GY_SUITE_H25519_512)
+            ASSERT_TRUE(d != NULL, "25519-tier suite enabled");
         else
             ASSERT_TRUE(d == NULL, "other suite NULL");
     }
@@ -227,6 +227,6 @@ TEST(hkdf_extract_iov_matches_flat)
     }
 }
 
-GY_TEST_MAIN(GY_TEST(c25519_self_consistency), GY_TEST(only_c25519_enabled),
+GY_TEST_MAIN(GY_TEST(c25519_self_consistency), GY_TEST(enabled_suites),
              GY_TEST(suite_f_prefix), GY_TEST(hmac_iov_matches_flat),
              GY_TEST(hkdf_extract_iov_matches_flat))

@@ -1,28 +1,37 @@
 # libtalos_geryon
 
 Clean-room C17 implementation of the Signal protocol (X3DH, Double Ratchet,
-Sesame, XEdDSA) with library-custodied keys. Protocol code is clean-room from
-the Signal specifications; primitives come from permissively-licensed libraries
-by preference. The public API is the single installed header `include/geryon.h`.
+Sesame, XEdDSA) with library-custodied keys, offering a classical suite and a
+post-quantum-hybrid suite. In the hybrid suite session security holds if
+EITHER the ECDH or the ML-KEM assumption survives, and offline deniability is
+preserved exactly as in the classical suite (no transcript signatures). The
+hybrid design is geryon's own (see [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md)),
+not Signal's PQXDH. Protocol code is clean-room from the Signal specifications;
+primitives come from permissively-licensed libraries by preference. The public
+API is the single installed header `include/geryon.h`.
 
 ## Cipher suites
 
 One suite is pinned per identity and never negotiated at runtime; it is bound
 into every KDF, so a message under one suite cannot complete a handshake under
-another (there is no fallback path in code). Curve, signature scheme, and hash
-move together.
+another (there is no fallback path in code, so no downgrade). Curve, signature
+scheme, hash, and KEM strength move together.
 
 | Suite | ID | Key exchange | Signatures | Hash |
 |-------|----|--------------|------------|------|
 | `geryon_c25519` | 0x01 | X25519 | XEdDSA | SHA-256 |
-| (reserved) | 0x02 | | | |
+| `geryon_h25519_512` | 0x02 | X25519 + ML-KEM-512 | XEdDSA + ML-DSA-44 | SHA-256 |
 | `geryon_c448` | 0x03 | X448 | XEd448 | SHA-512 |
 | (reserved) | 0x04 | | | |
 
-The classical suites provide **no** post-quantum confidentiality; they exist
-for size/bandwidth-constrained deployments. Suite IDs 0x02 and 0x04 are
-reserved for future suites and are rejected before any cryptographic
-processing.
+The classical suite (`geryon_c25519`) provides **no** post-quantum
+confidentiality; it exists for size/bandwidth-constrained deployments (32-byte
+X25519 keys vs. ~1 KB of ML-KEM material). The hybrid suite
+(`geryon_h25519_512`) mixes an ML-KEM secret into every X3DH DH and every
+Double Ratchet step, and dual-signs prekeys with XEdDSA and ML-DSA. A classical
+identity and a hybrid identity never interoperate; mixed deployments require
+distinct identities. Suite ID 0x04 (`geryon_h448_1024`) is reserved for a
+future 448-tier suite and is rejected before any cryptographic processing.
 
 ## Using the library
 
@@ -40,6 +49,9 @@ gy_custodian *cust;
 gy_custodian_create(&cust, GY_SUITE_C25519, &store, cred, cred_len,
                     my_uid, my_uid_len, my_did, my_did_len,
                     /*clock*/ NULL, NULL, /*expiry cfg*/ NULL);
+/* Pass GY_SUITE_H25519_512 here instead to create a hybrid identity; the
+ * suite is fixed for that identity's lifetime. Every call below is
+ * suite-agnostic (the wire objects self-describe). */
 gy_custodian_generate_identity(cust, spk_timestamp, /*one-time prekeys*/ 100);
 
 /* Publish the bundle (size query, then serialize). */
@@ -94,8 +106,10 @@ signing (`gy_custodian_sign`), verified independently of any custodian by
 plus per-client sealed stores, driving publish/fetch, X3DH + Double Ratchet
 messaging, the prekey lifecycle, SAK-authenticated requests, and restart
 persistence over `include/geryon.h` only. It doubles as a deterministic
-pass/fail smoke test (`ctest --test-dir build -R demo`). See
-[examples/README.md](examples/README.md).
+pass/fail smoke test (`ctest --test-dir build -R demo`). A parallel
+`geryon_hybrid_demo` runs the same lifecycle under `geryon_h25519_512`,
+additionally exercising the PQ-pending transition and the ratchet KEM refresh.
+See [examples/README.md](examples/README.md).
 
 ## Building
 
@@ -109,8 +123,9 @@ cmake --build build
 ```
 
 Dependencies are vendored as pinned submodules under `third_party/`:
-libsodium 1.0.22 (built via ExternalProject) and monocypher 4.0.3 (compiled
-directly).
+libsodium 1.0.22 (classical primitives, built via ExternalProject), liboqs
+0.16.0 (ML-KEM and ML-DSA for the hybrid suite, built via ExternalProject),
+and monocypher 4.0.3 (compiled directly). All three are permissively licensed.
 
 ### Sanitizers
 
@@ -165,10 +180,16 @@ cmake --build build --target format-check
 ## Documentation
 
 - [docs/DESIGN.md](docs/DESIGN.md) - whole-system design overview.
+- [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md) - the normative specification for
+  the hybrid suite (geryon's own PQ-hybrid design).
+- [docs/PQ_COMPARISON.md](docs/PQ_COMPARISON.md) - the hybrid design rationale
+  against Signal's PQ approach.
 - [CHANGELOG.md](CHANGELOG.md) - broad strokes per release.
 - [docs/decisions/](docs/decisions/README.md) - implementer decision
   register (build/test toolchain baseline is **D-GEN-5**).
 - [docs/CUSTODY_SPEC.md](docs/CUSTODY_SPEC.md) - the key-custody design.
+- [formal/](formal/README.md) - ProVerif symbolic models of the hybrid
+  protocol and the CI verdict table.
 - [docs/TEST_ORACLES.md](docs/TEST_ORACLES.md) - provenance and license of
   the external test-vector oracles.
 

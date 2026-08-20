@@ -124,4 +124,177 @@ int gy_kex_pkid_needs_regen(uint32_t pkid, const uint32_t *existing,
                             size_t n_existing);
 #endif
 
+/* ------------------------------------------------------------------------- *
+ * Hybrid suites (HYBRID_SPEC sections 4, 5).  Present only for is_hybrid
+ * descriptors (geryon_h25519_512, geryon_h448_1024).  Each hybrid structure
+ * embeds the classical struct as its first member (composition), so the curve
+ * field layout and secret are reused; the hybrid PKID, encoding, and signatures
+ * cover curve_type || curve_pk || mlkem_ek [|| mldsa_pk] and are computed by the
+ * hybrid helpers, never the classical curve-only ones.  Component buffers are
+ * sized to the GY_KEM_/GY_DSA_ maxima; each suite uses its descriptor lengths.
+ * ------------------------------------------------------------------------- */
+
+/* Dual-signature diagnostic codes (HYBRID_SPEC section 5.2). */
+#define GY_DIAG_CLASSICAL_FAILED 0x1
+#define GY_DIAG_PQ_FAILED 0x2
+#define GY_DIAG_BOTH_FAILED 0x3
+
+/* Hybrid public key (SPK, OPK, ratchet keys): curve + ML-KEM (section 4.1). */
+struct gy_hybrid_public_key {
+    struct gy_public_key curve;
+    uint8_t mlkem_ek[GY_KEM_EK_MAX];
+};
+
+/* Hybrid identity public key: adds ML-DSA (section 4.2). */
+struct gy_hybrid_identity_public_key {
+    struct gy_hybrid_public_key base;
+    uint8_t mldsa_pk[GY_DSA_PK_MAX];
+};
+
+/* Hybrid key pair (SPK/OPK/ratchet): public + curve_sk + mlkem_dk (section 4.3). */
+struct gy_hybrid_keypair {
+    struct gy_hybrid_public_key pub;
+    uint8_t curve_sk[GY_CURVE_SK_MAX];
+    uint8_t mlkem_dk[GY_KEM_DK_MAX];
+};
+
+/* Hybrid identity key pair: adds mldsa_sk (section 4.3). */
+struct gy_hybrid_identity_keypair {
+    struct gy_hybrid_identity_public_key pub;
+    uint8_t curve_sk[GY_CURVE_SK_MAX];
+    uint8_t mlkem_dk[GY_KEM_DK_MAX];
+    uint8_t mldsa_sk[GY_DSA_SK_MAX];
+};
+
+/*
+ * Hybrid signed prekey (owner object, section 5.1/5.2): the hybrid key pair
+ * (with private material), creation timestamp, flags (section 5.3), the signer
+ * identity PKID, and BOTH signatures over
+ * signed_data = encoded_public_key || timestamp_be64 || flags_be64.
+ */
+struct gy_hybrid_signed_prekey {
+    struct gy_hybrid_keypair kp;
+    uint64_t timestamp;
+    uint64_t flags;
+    uint32_t ik_id;
+    uint8_t ed_sig[GY_SIG_MAX];
+    uint8_t mldsa_sig[GY_DSA_SIG_MAX];
+};
+
+/*
+ * A published hybrid prekey bundle (public material only, section 5.4).
+ * opk.curve.pkid == 0 signals no one-time prekey.  The spk_* fields carry the
+ * signed prekey's public key, metadata, and both signatures.
+ */
+struct gy_hybrid_prekey_bundle {
+    struct gy_hybrid_identity_public_key ik;
+    struct gy_hybrid_public_key spk;
+    uint64_t spk_timestamp;
+    uint64_t spk_flags;
+    uint32_t spk_ik_id;
+    uint8_t spk_ed_sig[GY_SIG_MAX];
+    uint8_t spk_mldsa_sig[GY_DSA_SIG_MAX];
+    struct gy_hybrid_public_key opk;
+};
+
+/*
+ * Generate one hybrid key pair (curve + ML-KEM), computing its PKID over the
+ * encoded public key and regenerating on the zero sentinel (D-GEN-2).  Secret
+ * material is zeroized on any error path.  Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_hybrid_keypair_generate(const struct gy_suite_desc *desc,
+                               struct gy_hybrid_keypair *out);
+
+/*
+ * Generate a hybrid identity key pair (curve + ML-KEM + ML-DSA), PKID over the
+ * identity encoding.  Secret material zeroized on error.  Returns GY_OK or a
+ * negative GY_ERR_*.
+ */
+int gy_hybrid_identity_keypair_generate(const struct gy_suite_desc *desc,
+                                        struct gy_hybrid_identity_keypair *out);
+
+/*
+ * Create a hybrid signed prekey: generate the pair, build
+ * signed_data = encoded_public_key || timestamp_be64 || flags_be64, and sign it
+ * BOTH with XEdDSA (under ik->curve_sk) and ML-DSA (under ik->mldsa_sk with
+ * ctx = INFO("prekey"), D-PQ-1).  flags must be well-formed (section 5.3).
+ * timestamp is caller-supplied (D-X3DH-4).  Secret material zeroized on error.
+ * Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_hybrid_spk_create(const struct gy_suite_desc *desc,
+                         struct gy_hybrid_signed_prekey *out,
+                         const struct gy_hybrid_identity_keypair *ik,
+                         uint64_t timestamp, uint64_t flags);
+
+/*
+ * Generate a batch of n hybrid one-time prekeys (1 <= n <= GY_OPK_BATCH_MAX),
+ * every PKID unique within the batch and against existing[] (D-X3DH-10).  All
+ * secret keys zeroized on any error.  Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_hybrid_opk_batch(const struct gy_suite_desc *desc,
+                        struct gy_hybrid_keypair *out, size_t n,
+                        const uint32_t *existing, size_t n_existing);
+
+/*
+ * Validate flags (section 5.3): ChaCha20-Poly1305 MTI bit set, reserved bits
+ * (35..63) zero, 1 <= min_interval <= max_interval <= 100.  Returns GY_OK or
+ * GY_ERR_VERIFY.
+ */
+int gy_hybrid_flags_validate(uint64_t flags);
+
+/*
+ * Validate a hybrid prekey bundle before ANY private-key operation (D-X3DH-14),
+ * in order: (a) suite/curve consistency and is_hybrid; (b) PKID present and
+ * recomputes for every present key (IK, SPK, OPK if present) and spk_ik_id
+ * matches the IK PKID; (c) flags well-formed; (d) BOTH signatures verify over
+ * signed_data - failure aborts with the section 5.2 diagnostic written to
+ * *diag_out (0x1/0x2/0x3), if diag_out is non-NULL.  A single-signature bundle
+ * is impossible to represent and both are always checked.  Performs no
+ * private-key operation.  Returns GY_OK on a fully valid bundle.
+ */
+int gy_hybrid_bundle_validate(const struct gy_suite_desc *desc,
+                              const struct gy_hybrid_prekey_bundle *bundle,
+                              uint8_t *diag_out);
+
+/*
+ * Encode a hybrid public key (curve_type || curve_pk || mlkem_ek, section 4.1)
+ * or identity public key (... || mldsa_pk, section 4.2) into out; *outlen gets
+ * the length (833 SPK/OPK, 2145 identity for h25519_512).  These are the bytes
+ * PKIDs, signatures, and IKhash cover.  Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_hybrid_encode_pub(const struct gy_suite_desc *desc,
+                         const struct gy_hybrid_public_key *pub, uint8_t *out,
+                         size_t cap, size_t *outlen);
+int gy_hybrid_encode_identity(const struct gy_suite_desc *desc,
+                              const struct gy_hybrid_identity_public_key *pub,
+                              uint8_t *out, size_t cap, size_t *outlen);
+
+/*
+ * IKhash (HYBRID_SPEC section 6.7): the suite hash over a complete hybrid
+ * identity encoding (curve_type || curve_pk || mlkem_ek || mldsa_pk).  Writes
+ * desc->hash_len bytes.  Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_hybrid_ikhash(const struct gy_suite_desc *desc,
+                     const struct gy_hybrid_identity_public_key *ik,
+                     uint8_t *out);
+
+#ifdef GY_TEST_HOOKS
+/*
+ * KAT-only views of the two signed_data builders, exposing the exact bytes a
+ * prekey signature covers so a self-KAT can pin the construction (D-GEN-6, §11.2)
+ * without running any signature primitive.  Thin wrappers over the internal
+ * static builders; production code never sees these and the byte layout under
+ * test is identical to the signing path.  No randomness, no state.
+ *
+ *   classical: EncodeEC(pub) || timestamp_be64                (D-X3DH-4)
+ *   hybrid:    encoded_public_key || timestamp_be64 || flags_be64 (§5.2)
+ */
+int gy_kex_spk_signed_data(const struct gy_public_key *pub, uint64_t timestamp,
+                           uint8_t *out, size_t cap, size_t *outlen);
+int gy_kex_hybrid_signed_data(const struct gy_suite_desc *desc,
+                              const struct gy_hybrid_public_key *pub,
+                              uint64_t timestamp, uint64_t flags, uint8_t *out,
+                              size_t cap, size_t *outlen);
+#endif
+
 #endif /* GY_PREKEYS_H */

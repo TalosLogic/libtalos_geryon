@@ -1,0 +1,110 @@
+(* formal/models/lib_smoke.pv
+ *
+ * Library smoke test. An honest, OPK-absent handshake that
+ * exercises EVERY theory in formal/lib/geryon.pvl (DH, KEM, HASH/HKDF,
+ * INFO/suite binding, the PQ-first combiner, SK derivation, KDF_RK split,
+ * KDF_CK, dual prekey signatures, AEAD+AD, encodings, and the D-FM-4
+ * events). It is NOT a security model: it makes no attacker claim. Its
+ * only job is to guard against a VACUOUS library - a typo that makes an
+ * honest run impossible (a destructor that never reduces) would block the
+ * final `out(pub, reached)`, flipping the recorded verdict.
+ *
+ * Run with the shared library:
+ *   proverif -lib formal/lib/geryon.pvl formal/models/lib_smoke.pv
+ *
+ * HYBRID_SPEC sections exercised: §2.1 (F), §3.1 (combiner), §3.2 (INFO),
+ *   §5.2 (dual prekey signatures over the (curve_pk, mlkem_ek) pairing),
+ *   §6.3 (per-key HDH fusion), §6.4 (SK), §6.7 (AD_first), §7.3 (KDF_RK
+ *   split), §7.4 (KDF_CK). Register decisions consumed: D-FM-1, D-FM-4.
+ *
+ * Query and expected verdict:
+ *   query attacker(reached)  ->  RESULT ... is false   (NON-VACUITY
+ *   WITNESS: `reached` is a private constant Bob outputs on pub ONLY if
+ *   the honest run reaches his accept; "is false" == reachable == the
+ *   library is not vacuous. This is a sanity witness, not an attack.)
+ * Expected runtime on the CI runner class: < 1 s (budget 10 s).
+ *)
+
+free reached: bitstring [private].
+
+query attacker(reached).
+
+process
+    (* --- honest key material ------------------------------------- *)
+    new ik_a_sk: scalar;  new ik_a_kem: kempriv;  new ik_a_dsa: mldsapriv;
+    new ik_b_sk: scalar;  new ik_b_kem: kempriv;  new ik_b_dsa: mldsapriv;
+    new spk_b_sk: scalar; new spk_b_kem: kempriv;
+    new ek_a_sk: scalar;
+    new ts: bitstring;    new flags: bitstring;   new iv: interval;
+
+    let ik_a_curve  = smul(ik_a_sk, gen) in
+    let ik_a_ek     = kempk(ik_a_kem) in
+    let ik_a_dpk    = mldsapk(ik_a_dsa) in
+    let ik_b_curve  = smul(ik_b_sk, gen) in
+    let ik_b_ek     = kempk(ik_b_kem) in
+    let ik_b_dpk    = mldsapk(ik_b_dsa) in
+    let spk_b_curve = smul(spk_b_sk, gen) in
+    let spk_b_ek    = kempk(spk_b_kem) in
+    let ek_a_curve  = smul(ek_a_sk, gen) in
+
+    (* publish all public keys to the attacker *)
+    out(pub, (ik_a_curve, ik_a_ek, ik_a_dpk,
+              ik_b_curve, ik_b_ek, ik_b_dpk,
+              spk_b_curve, spk_b_ek, ek_a_curve));
+
+    (* --- Bob signs the SPK pairing with BOTH schemes (§5.2) ------- *)
+    let ctx = INFO(su_h25519_512, pu_prekey) in
+    let sd  = signed_data(ppair(spk_b_curve, spk_b_ek), ts, flags) in
+    let ed  = xeddsa_sign(ik_b_sk, sd) in
+    let md  = mldsa_sign(ik_b_dsa, sd, ctx) in
+    out(pub, (sd, ed, md));
+
+    (* --- Alice validates the bundle: BOTH signatures required ----- *)
+    if prekey_ok(ik_b_curve, ik_b_dpk, sd, ctx, ed, md) then
+
+    (* identifiers for the event tuples (§3.3 PKID, simplified) *)
+    let ha     = ikhash(ik_a_curve, ik_a_ek, ik_a_dpk) in
+    let hb     = ikhash(ik_b_curve, ik_b_ek, ik_b_dpk) in
+    let spk_id = HASH(encodeEC(spk_b_curve)) in
+    let opk_id = zeros in
+
+    (* --- Alice: DH1..3 + KEM to IK_B and SPK_B (§6.1, §6.3) ------- *)
+    let dh1 = ecdh(ik_a_sk, spk_b_curve) in
+    let dh2 = ecdh(ek_a_sk, ik_b_curve) in
+    let dh3 = ecdh(ek_a_sk, spk_b_curve) in
+    let (ct_ik: bitstring,  kem_ik: bitstring)  = pqkem_enc(ik_b_ek) in
+    let (ct_spk: bitstring, kem_spk: bitstring) = pqkem_enc(spk_b_ek) in
+    let h1 = hdh(kem_spk, dh1) in
+    let h2 = hdh(kem_ik,  dh2) in
+    let h3 = hdh(kem_spk, dh3) in
+    let sk_a    = x3dh_sk3(su_h25519_512, h1, h2, h3) in
+    let adf     = ad_frst(ha, hb, hflag(iv, ae_chacha)) in
+    let aeadk_a = HKDF(sk_a, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    new msg: bitstring;
+    let ctext = aead_enc(aeadk_a, adf, msg) in
+    event InitiatorStarted(su_h25519_512, iv, ae_chacha, ha, hb, spk_id, opk_id);
+    out(pub, (ct_ik, ct_spk, ctext));
+
+    (* --- Bob mirrors: recompute SK, decrypt, touch the ratchet --- *)
+    let kem_ik_b  = pdec(ik_b_kem,  ct_ik) in
+    let kem_spk_b = pdec(spk_b_kem, ct_spk) in
+    let dh1b = ecdh(spk_b_sk, ik_a_curve) in
+    let dh2b = ecdh(ik_b_sk,  ek_a_curve) in
+    let dh3b = ecdh(spk_b_sk, ek_a_curve) in
+    let h1b = hdh(kem_spk_b, dh1b) in
+    let h2b = hdh(kem_ik_b,  dh2b) in
+    let h3b = hdh(kem_spk_b, dh3b) in
+    let sk_b    = x3dh_sk3(su_h25519_512, h1b, h2b, h3b) in
+    let aeadk_b = HKDF(sk_b, zeros, INFO(su_h25519_512, pu_dr_aead)) in
+    let plain   = aead_dec(aeadk_b, adf, ctext) in
+
+    (* exercise the ratchet theories once (§7.3, §7.4) *)
+    let rkout = kdf_rk(su_h25519_512, sk_b, h1b) in
+    let rk1   = rk_split(rkout) in
+    let ck1   = ck_split(rkout) in
+    let nhk1  = nhk_split(rkout) in
+    let mk1   = kdf_ck_mk(su_h25519_512, ck1) in
+    let ck2   = kdf_ck_next(su_h25519_512, ck1) in
+
+    event ResponderAccepted(su_h25519_512, iv, ae_chacha, ha, hb, spk_id, opk_id);
+    out(pub, reached)

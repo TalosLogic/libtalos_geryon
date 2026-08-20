@@ -75,6 +75,18 @@ int gy_session_stale(const struct gy_expiry_cfg *cfg,
 int gy_identity_fingerprint(const struct gy_suite_desc *desc, uint8_t *out,
                             const struct gy_public_key *ik);
 
+/*
+ * Session-layer re-export of the hybrid identity fingerprint (IKhash,
+ * HYBRID_SPEC section 6.7): the suite hash over the complete hybrid identity
+ * (curve || mlkem_ek || mldsa_pk), written as desc->hash_len bytes to out.  The
+ * hybrid analogue of gy_identity_fingerprint, so Layer 5 proto/ can surface a
+ * hybrid self-fingerprint without reaching into kex/.  Returns GY_OK or a
+ * negative GY_ERR_*.
+ */
+int
+gy_hybrid_identity_fingerprint(const struct gy_suite_desc *desc, uint8_t *out,
+                               const struct gy_hybrid_identity_public_key *ik);
+
 /* ---- identity-key conditional update (section 3.2, D-SES-9) ------------ */
 
 /*
@@ -111,6 +123,19 @@ int gy_conditional_update(struct gy_op *op, uint8_t suite_id,
                           struct gy_key_change *chg);
 
 /*
+ * Hybrid conditional update: as gy_conditional_update, but tracks and compares
+ * the FULL hybrid identity (curve + ML-KEM + ML-DSA, section 4.2) so a change of
+ * ANY component fails closed with GY_ERR_KEY_CHANGED.  The stored DeviceRecord
+ * is the composed gy_hybrid_device_record and the fingerprint is IKhash over the
+ * whole identity.  suite_id must name a hybrid suite.
+ */
+int gy_hybrid_conditional_update(struct gy_op *op, uint8_t suite_id,
+                                 const uint8_t *user_id, size_t user_id_len,
+                                 const uint8_t *device_id, size_t device_id_len,
+                                 const struct gy_hybrid_identity_public_key *ik,
+                                 struct gy_key_change *chg);
+
+/*
  * Explicitly accept a peer identity-key change (section 3.2 replacement,
  * D-SES-9): the DeviceRecord's identity key is replaced with ik and ALL of its
  * sessions are deleted (deferred), converging on the new key.  The DeviceID and
@@ -121,6 +146,16 @@ int gy_accept_key_change(struct gy_op *op, uint8_t suite_id,
                          const uint8_t *user_id, size_t user_id_len,
                          const uint8_t *device_id, size_t device_id_len,
                          const struct gy_public_key *ik);
+
+/*
+ * Hybrid twin of gy_accept_key_change: replace the stored FULL hybrid identity
+ * (curve + ML-KEM + ML-DSA) with ik and delete all of the device's sessions.
+ * suite_id must name a hybrid suite.
+ */
+int gy_hybrid_accept_key_change(struct gy_op *op, uint8_t suite_id,
+                                const uint8_t *user_id, size_t user_id_len,
+                                const uint8_t *device_id, size_t device_id_len,
+                                const struct gy_hybrid_identity_public_key *ik);
 
 /* ---- session insert / activate through the engine (D-SES-5) ------------ */
 
@@ -146,6 +181,21 @@ int gy_device_activate_session(struct gy_op *op, const uint8_t *user_id,
                                size_t user_id_len, const uint8_t *device_id,
                                size_t device_id_len,
                                const uint8_t id[GY_SESSION_ID_LEN]);
+
+/*
+ * Read the peer PQ-authentication state (HYBRID_SPEC section 8.4) of a device's
+ * ACTIVE session, for the public gy_pq_pending query.  Loads the device record
+ * and, if it has an active session, that session, and sets *confirmed to 1 iff
+ * that session's mirrored pq_pending is GY_HYBRID_PQ_CONFIRMED (else 0), with
+ * *found set to 1.  Reporting a plain boolean keeps the public GY_PQ_* mapping
+ * in proto/ and off this layer.  A missing device, a device with no active
+ * session, or a missing session record leaves *found 0 (and *confirmed
+ * untouched).  Read-only: stages nothing; the caller owns the transaction
+ * lifecycle.  Returns GY_OK or a negative GY_ERR_*.
+ */
+int gy_device_pq_state(struct gy_op *op, const uint8_t *user_id,
+                       size_t user_id_len, const uint8_t *device_id,
+                       size_t device_id_len, int *confirmed, int *found);
 
 /* ---- device / user deletion (compromise recovery, D-SES-2) ------------- */
 

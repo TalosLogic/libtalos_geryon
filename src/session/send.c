@@ -25,6 +25,33 @@
 #define GY_SEND_MSG_SIZE(ptlen) (GY_SEND_DR_OVERHEAD + (ptlen))
 #define GY_SEND_INIT_SIZE(ptlen) (GY_X3DH_PREFIX_MAX + GY_SEND_MSG_SIZE(ptlen))
 
+#define GY_SEND_HYBRID_DR_OVERHEAD                                             \
+    (2 + GY_HE_SALT_LEN + 2 + GY_DR_HYBRID_ENC_HEADER_MAX + GY_AEAD_MAX_TAG)
+#define GY_SEND_INIT_HYBRID_SIZE(ptlen)                                        \
+    (GY_HYBRID_X3DH_PREFIX_MAX + GY_SEND_HYBRID_DR_OVERHEAD + (ptlen))
+
+/*
+ * Encrypt on a session, dispatching to the hybrid or classical engine by the
+ * session's own suite and mirroring the hybrid PQ-auth state into the record.
+ */
+static int
+sess_encrypt(struct gy_session *s, uint8_t *out, size_t cap, size_t *outlen,
+             const uint8_t *pt, size_t ptlen)
+{
+    int rc;
+
+    if (s->ratchet.base.desc->is_hybrid) {
+        rc = gy_hybrid_dr_encrypt(&s->ratchet, out, cap, outlen, pt, ptlen,
+                                  s->ad, s->ad_len);
+        if (rc == GY_OK)
+            s->pq_pending = s->ratchet.pq_state;
+    } else {
+        rc = gy_dr_encrypt(&s->ratchet.base, out, cap, outlen, pt, ptlen, s->ad,
+                           s->ad_len);
+    }
+    return rc;
+}
+
 /* ---- context / transaction -------------------------------------------- */
 
 int
@@ -35,8 +62,11 @@ gy_send_ctx_init(struct gy_send_ctx *c, const struct gy_store *store,
                  const uint8_t *self_user_id, size_t self_user_id_len,
                  const uint8_t *self_device_id, size_t self_device_id_len)
 {
-    if (c == NULL || store == NULL || desc == NULL || local_ik == NULL)
+    if (c == NULL || store == NULL || desc == NULL)
         return GY_ERR_ARG;
+    /* local_ik may be NULL for a hybrid-suite context: the hybrid identity is
+     * supplied per-call to gy_send_initiate_hybrid, and steady-state
+     * gy_send_encrypt uses no identity (it dispatches on the session suite). */
     if (self_user_id_len > GY_USER_ID_MAX ||
         self_device_id_len > GY_DEVICE_ID_MAX)
         return GY_ERR_ARG;
@@ -113,7 +143,7 @@ classify_device(struct gy_send_ctx *c, const uint8_t *user_id,
                 size_t user_id_len, const uint8_t *device_id,
                 size_t device_id_len, enum gy_send_status *status)
 {
-    struct gy_device_record dev;
+    struct gy_hybrid_device_record dev;
     struct gy_session s;
     uint8_t dk[GY_DEVKEY_LEN];
     int found, rc;
@@ -121,16 +151,16 @@ classify_device(struct gy_send_ctx *c, const uint8_t *user_id,
     rc = gy_devrec_key(user_id, user_id_len, device_id, device_id_len, dk);
     if (rc != GY_OK)
         return rc;
-    rc = gy_op_load_device(&c->op, dk, GY_DEVKEY_LEN, &dev, &found);
+    rc = gy_op_load_device_any(&c->op, dk, GY_DEVKEY_LEN, &dev, NULL, &found);
     if (rc != GY_OK)
         return rc;
-    if (!found || !dev.has_active) {
+    if (!found || !dev.base.has_active) {
         *status = GY_SEND_NEEDS_BUNDLE;
-        gy_device_record_free(&dev);
+        gy_hybrid_device_record_free(&dev);
         return GY_OK;
     }
-    rc = gy_op_load_session(&c->op, dev.active, &s, &found);
-    gy_device_record_free(&dev);
+    rc = gy_op_load_session(&c->op, dev.base.active, &s, &found);
+    gy_hybrid_device_record_free(&dev);
     if (rc != GY_OK)
         return rc;
     if (!found) {
@@ -209,7 +239,7 @@ gy_send_encrypt(struct gy_send_ctx *c, const uint8_t *user_id,
                 size_t device_id_len, const uint8_t *pt, size_t ptlen,
                 uint8_t *out, size_t *out_len)
 {
-    struct gy_device_record dev;
+    struct gy_hybrid_device_record dev;
     struct gy_session s;
     uint8_t dk[GY_DEVKEY_LEN];
     int found, rc;
@@ -217,7 +247,9 @@ gy_send_encrypt(struct gy_send_ctx *c, const uint8_t *user_id,
     if (c == NULL || device_id == NULL || out_len == NULL)
         return GY_ERR_ARG;
     if (out == NULL) {
-        *out_len = GY_SEND_MSG_SIZE(ptlen);
+        /* Upper bound from the ctx suite (hybrid frames are wider). */
+        *out_len = c->desc->is_hybrid ? GY_SEND_HYBRID_DR_OVERHEAD + ptlen
+                                      : GY_SEND_MSG_SIZE(ptlen);
         return GY_OK;
     }
     if (!c->begun)
@@ -226,15 +258,15 @@ gy_send_encrypt(struct gy_send_ctx *c, const uint8_t *user_id,
     rc = gy_devrec_key(user_id, user_id_len, device_id, device_id_len, dk);
     if (rc != GY_OK)
         return rc;
-    rc = gy_op_load_device(&c->op, dk, GY_DEVKEY_LEN, &dev, &found);
+    rc = gy_op_load_device_any(&c->op, dk, GY_DEVKEY_LEN, &dev, NULL, &found);
     if (rc != GY_OK)
         return rc;
-    if (!found || !dev.has_active) {
-        gy_device_record_free(&dev);
+    if (!found || !dev.base.has_active) {
+        gy_hybrid_device_record_free(&dev);
         return GY_ERR_STATE;
     }
-    rc = gy_op_load_session(&c->op, dev.active, &s, &found);
-    gy_device_record_free(&dev);
+    rc = gy_op_load_session(&c->op, dev.base.active, &s, &found);
+    gy_hybrid_device_record_free(&dev);
     if (rc != GY_OK)
         return rc;
     if (!found)
@@ -245,8 +277,7 @@ gy_send_encrypt(struct gy_send_ctx *c, const uint8_t *user_id,
         return GY_ERR_EXPIRED; /* never send under a stale device (D-SES-7) */
     }
 
-    rc =
-        gy_dr_encrypt(&s.dr, out, *out_len, out_len, pt, ptlen, s.ad, s.ad_len);
+    rc = sess_encrypt(&s, out, *out_len, out_len, pt, ptlen);
     if (rc != GY_OK)
         goto out;
     s.nsend++;
@@ -257,6 +288,49 @@ out:
 }
 
 /* ---- initiation (section 3.3 / D-X3DH-15) ------------------------------ */
+
+/*
+ * Emit the initial message: the X3DH prefix followed by the first DR frame
+ * (encrypted by the session's own engine).  Classical prefixes end in a
+ * ciphertext_len placeholder that is patched with the frame length
+ * (patch_ctlen); the hybrid prefix ends in hybrid_flag and the frame is the
+ * message tail, so no patch is needed.  Advances the send counter.
+ */
+static int
+emit_initial(struct gy_session *s, const uint8_t *prefix, size_t prefix_len,
+             int patch_ctlen, const uint8_t *pt, size_t ptlen, uint8_t *out,
+             size_t cap, size_t *outlen)
+{
+    size_t frame_len = 0;
+    int rc;
+
+    if (prefix_len < 4 || prefix_len > cap)
+        return GY_ERR_ARG;
+    memcpy(out, prefix, prefix_len);
+    rc = sess_encrypt(s, out + prefix_len, cap - prefix_len, &frame_len, pt,
+                      ptlen);
+    if (rc != GY_OK)
+        return rc;
+    if (patch_ctlen)
+        gy_be32_put(out + prefix_len - 4, (uint32_t)frame_len);
+    *outlen = prefix_len + frame_len;
+    s->nsend++;
+    return GY_OK;
+}
+
+/* Stage the new session and insert it as the device's active session. */
+static int
+finish_initiate(struct gy_op *op, const uint8_t *user_id, size_t user_id_len,
+                const uint8_t *device_id, size_t device_id_len,
+                struct gy_session *s)
+{
+    int rc = gy_op_put_session(op, s);
+
+    if (rc != GY_OK)
+        return rc;
+    return gy_device_insert_session(op, user_id, user_id_len, device_id,
+                                    device_id_len, s->id);
+}
 
 static int
 send_initiate_core(struct gy_send_ctx *c, const uint8_t *user_id,
@@ -271,7 +345,7 @@ send_initiate_core(struct gy_send_ctx *c, const uint8_t *user_id,
     struct gy_session s;
     uint8_t prefix[GY_X3DH_PREFIX_MAX];
     uint8_t ad[GY_X3DH_AD_MAX];
-    size_t prefix_len = 0, ad_len = 0, frame_len = 0, cap;
+    size_t prefix_len = 0, ad_len = 0;
     int rc;
 
     if (c == NULL || device_id == NULL || bundle == NULL || out_len == NULL)
@@ -280,8 +354,8 @@ send_initiate_core(struct gy_send_ctx *c, const uint8_t *user_id,
         *out_len = GY_SEND_INIT_SIZE(ptlen);
         return GY_OK;
     }
-    if (!c->begun)
-        return GY_ERR_STATE;
+    if (!c->begun || c->local_ik == NULL)
+        return GY_ERR_STATE; /* classical initiation needs the classical ik */
     desc = c->desc;
 
     /* Create-or-update the peer records first; fail closed on a key change. */
@@ -301,7 +375,8 @@ send_initiate_core(struct gy_send_ctx *c, const uint8_t *user_id,
                           c->local_ik, bundle, &ek);
     if (rc != GY_OK)
         goto out;
-    rc = gy_dr_init_alice(&s.dr, desc, c->aead_id, &secrets, bundle->spk.pk);
+    rc = gy_dr_init_alice(&s.ratchet.base, desc, c->aead_id, &secrets,
+                          bundle->spk.pk);
     if (rc != GY_OK)
         goto out;
     memcpy(s.ad, ad, ad_len);
@@ -310,29 +385,14 @@ send_initiate_core(struct gy_send_ctx *c, const uint8_t *user_id,
     if (rc != GY_OK)
         goto out;
 
-    /* Message = X3DH prefix then the complete first DR frame; the prefix ends
-     * in a zero ciphertext_len placeholder we overwrite with the frame len. */
-    cap = *out_len;
-    if (prefix_len < 4 || prefix_len > cap) {
-        rc = GY_ERR_ARG;
-        goto out;
-    }
-    memcpy(out, prefix, prefix_len);
-    rc = gy_dr_encrypt(&s.dr, out + prefix_len, cap - prefix_len, &frame_len,
-                       pt, ptlen, s.ad, s.ad_len);
+    /* Message = X3DH prefix then the complete first DR frame; the classical
+     * prefix ends in a ciphertext_len placeholder emit_initial overwrites. */
+    rc = emit_initial(&s, prefix, prefix_len, 1, pt, ptlen, out, *out_len,
+                      out_len);
     if (rc != GY_OK)
         goto out;
-    gy_be32_put(out + prefix_len - 4, (uint32_t)frame_len);
-    *out_len = prefix_len + frame_len;
-    s.nsend++;
-
-    /* Stage the session, then insert its id as the device's active session
-     * (read-your-writes lets the insert see the just-staged DeviceRecord). */
-    rc = gy_op_put_session(&c->op, &s);
-    if (rc != GY_OK)
-        goto out;
-    rc = gy_device_insert_session(&c->op, user_id, user_id_len, device_id,
-                                  device_id_len, s.id);
+    rc = finish_initiate(&c->op, user_id, user_id_len, device_id, device_id_len,
+                         &s);
 out:
     gy_session_free(&s);
     gy_secure_zero(&secrets, sizeof(secrets));
@@ -365,4 +425,109 @@ gy_session_reinitiate(struct gy_send_ctx *c, const uint8_t *user_id,
      * initiation IS the orphan escape (D-SES-8). */
     return send_initiate_core(c, user_id, user_id_len, device_id, device_id_len,
                               bundle, pt, ptlen, chg, out, out_len);
+}
+
+/* ---- hybrid initiation (section 6) ------------------------------------- */
+
+/*
+ * Build hybrid_flag (section 6.6) from the ctx AEAD + preferred interval and
+ * the peer SPK's signed advertisement: interval clamped to [min,max]; AEAD kept
+ * if advertised, else the ChaCha20-Poly1305 MTI (aead_id 1, always advertised).
+ */
+static uint32_t
+build_hybrid_flag(uint8_t aead_pref, uint32_t interval_pref,
+                  const struct gy_hybrid_prekey_bundle *bundle)
+{
+    uint16_t mn = (uint16_t)(bundle->spk_flags & 0xFFFF);
+    uint16_t mx = (uint16_t)((bundle->spk_flags >> 16) & 0xFFFF);
+    uint32_t interval = interval_pref;
+    uint8_t aead = aead_pref;
+
+    if (interval < mn)
+        interval = mn;
+    if (interval > mx)
+        interval = mx;
+    if (aead < 1 || aead > 3 ||
+        (bundle->spk_flags & (UINT64_C(1) << (31 + aead))) == 0)
+        aead = 1; /* MTI fallback */
+    return (interval & 0xFFFF) | ((uint32_t)aead << 16);
+}
+
+int
+gy_send_initiate_hybrid(
+    struct gy_send_ctx *c, const struct gy_hybrid_identity_keypair *local_hik,
+    uint32_t mlkem_interval, const uint8_t *user_id, size_t user_id_len,
+    const uint8_t *device_id, size_t device_id_len,
+    const struct gy_hybrid_prekey_bundle *bundle, const uint8_t *pt,
+    size_t ptlen, struct gy_key_change *chg, uint8_t *out, size_t *out_len)
+{
+    const struct gy_suite_desc *desc;
+    struct gy_dr_secrets secrets;
+    struct gy_keypair ek;
+    struct gy_session s;
+    uint8_t prefix[GY_HYBRID_X3DH_PREFIX_MAX];
+    uint8_t ad[GY_HYBRID_AD_MAX];
+    size_t prefix_len = 0, ad_len = 0;
+    uint32_t flag, interval;
+    uint8_t aead;
+    int rc;
+
+    if (c == NULL || local_hik == NULL || device_id == NULL || bundle == NULL ||
+        out_len == NULL)
+        return GY_ERR_ARG;
+    if (out == NULL) {
+        *out_len = GY_SEND_INIT_HYBRID_SIZE(ptlen);
+        return GY_OK;
+    }
+    if (!c->begun || !c->desc->is_hybrid)
+        return GY_ERR_STATE;
+    desc = c->desc;
+
+    /* Full-identity conditional update; fail closed on any key change. */
+    rc = gy_hybrid_conditional_update(&c->op, desc->suite_id, user_id,
+                                      user_id_len, device_id, device_id_len,
+                                      &bundle->ik, chg);
+    if (rc != GY_OK)
+        return rc;
+
+    memset(&secrets, 0, sizeof(secrets));
+    memset(&ek, 0, sizeof(ek));
+    memset(&s, 0, sizeof(s));
+
+    flag = build_hybrid_flag(c->aead_id, mlkem_interval, bundle);
+    interval = flag & 0xFFFF;
+    aead = (uint8_t)((flag >> 16) & 0xFF);
+
+    rc = gy_keypair_generate(desc, &ek);
+    if (rc != GY_OK)
+        goto out;
+    rc = gy_hybrid_x3dh_initiate(desc, &secrets, ad, &ad_len, prefix,
+                                 &prefix_len, local_hik, bundle, &ek, flag);
+    if (rc != GY_OK)
+        goto out;
+    rc = gy_hybrid_dr_init_alice(&s.ratchet, desc, aead, &secrets, &bundle->spk,
+                                 interval, local_hik->mlkem_dk);
+    if (rc != GY_OK)
+        goto out;
+    memcpy(s.ad, ad, ad_len);
+    s.ad_len = (uint8_t)ad_len;
+    s.pq_pending = s.ratchet.pq_state;
+    rc = gy_session_id(&s, desc, &local_hik->pub.base.curve, &ek.pub);
+    if (rc != GY_OK)
+        goto out;
+
+    /* Hybrid prefix ends in hybrid_flag; the first frame is the tail. */
+    rc = emit_initial(&s, prefix, prefix_len, 0, pt, ptlen, out, *out_len,
+                      out_len);
+    if (rc != GY_OK)
+        goto out;
+    rc = finish_initiate(&c->op, user_id, user_id_len, device_id, device_id_len,
+                         &s);
+out:
+    gy_session_free(&s);
+    gy_secure_zero(&secrets, sizeof(secrets));
+    gy_secure_zero(&ek, sizeof(ek));
+    gy_secure_zero(prefix, sizeof(prefix));
+    gy_secure_zero(ad, sizeof(ad));
+    return rc;
 }
