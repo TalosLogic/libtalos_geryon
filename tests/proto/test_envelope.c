@@ -186,21 +186,28 @@ TEST(fingerprint_surface)
 int
 main(void)
 {
+    /* Envelope + bundle wire formats at both classical tiers (bundle
+     * sizes are descriptor-driven via gy_bundle_wire_len, so 448 is covered). */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(envelope_roundtrip),
+        GY_TEST(envelope_negatives),
+        GY_TEST(bundle_roundtrip_with_and_without_opk),
+        GY_TEST(bundle_structural_negatives),
+        GY_TEST(seam_tampered_bundle_parses_but_fails_validation),
+        GY_TEST(fingerprint_surface),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(envelope_roundtrip),
-            GY_TEST(envelope_negatives),
-            GY_TEST(bundle_roundtrip_with_and_without_opk),
-            GY_TEST(bundle_structural_negatives),
-            GY_TEST(seam_tampered_bundle_parses_but_fails_validation),
-            GY_TEST(fingerprint_surface),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

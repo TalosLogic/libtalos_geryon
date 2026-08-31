@@ -22,6 +22,9 @@
 
 #include "gy_test.h"
 
+/* Custodian classical vertical runs under both classical suites. */
+static uint8_t g_suite;
+
 /* ---- minimal two-party mock store (public int-kind callbacks) ---------- */
 
 #define MOCK_MAX 16
@@ -232,13 +235,13 @@ TEST(no_public_output_carries_a_private_scalar)
 
     mstore_bind(&am, &acb);
     mstore_bind(&bm, &bcb);
-    ASSERT_EQ(gy_custodian_create(&a, GY_SUITE_C25519, &acb, acred,
-                                  sizeof(acred) - 1, auid, sizeof(auid), adid,
-                                  sizeof(adid), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&a, g_suite, &acb, acred, sizeof(acred) - 1,
+                                  auid, sizeof(auid), adid, sizeof(adid), NULL,
+                                  NULL, NULL),
               GY_OK);
-    ASSERT_EQ(gy_custodian_create(&b, GY_SUITE_C25519, &bcb, bcred,
-                                  sizeof(bcred) - 1, buid, sizeof(buid), bdid,
-                                  sizeof(bdid), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&b, g_suite, &bcb, bcred, sizeof(bcred) - 1,
+                                  buid, sizeof(buid), bdid, sizeof(bdid), NULL,
+                                  NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(a, 1000, 2), GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(b, 1000, 2), GY_OK);
@@ -287,12 +290,18 @@ TEST(no_public_output_carries_a_private_scalar)
 int
 main(void)
 {
-    ASSERT_EQ(gy_core_init(), GY_OK);
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(no_public_output_carries_a_private_scalar),
+    };
+    size_t s;
+    int rc = 0;
 
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(no_public_output_carries_a_private_scalar),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    ASSERT_EQ(gy_core_init(), GY_OK);
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

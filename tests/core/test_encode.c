@@ -57,10 +57,14 @@ TEST(suite_lookup)
                     d->curve_type == GY_CURVE_TYPE_25519 &&
                     strcmp(d->name, "c25519") == 0,
                 "c25519 descriptor");
-    /* c25519 and h25519_512 are enabled; the 448-tier suites are not yet. */
+    /* c25519, h25519_512, and c448 are enabled; h448_1024 is not yet. */
+    d = gy_suite_desc(GY_SUITE_C448);
+    ASSERT_TRUE(d != NULL && d->hash_len == 64 &&
+                    d->curve_type == GY_CURVE_TYPE_448 &&
+                    strcmp(d->name, "c448") == 0,
+                "c448 descriptor");
     ASSERT_TRUE(gy_suite_desc(0x00) == NULL, "reserved 0x00 unknown");
     ASSERT_TRUE(gy_suite_desc(GY_SUITE_H25519_512) != NULL, "0x02 enabled");
-    ASSERT_TRUE(gy_suite_desc(GY_SUITE_C448) == NULL, "0x03 not enabled");
     ASSERT_TRUE(gy_suite_desc(GY_SUITE_H448_1024) == NULL, "0x04 not enabled");
     ASSERT_TRUE(gy_suite_desc(0x05) == NULL, "0x05 unknown");
 }
@@ -101,8 +105,13 @@ TEST(pkid_kats)
     ASSERT_EQ(gy_pkid(&pkid, GY_SUITE_C25519, enc, 33), GY_OK);
     ASSERT_EQ(pkid, 0x2491ab32u);
 
-    /* Suites not yet enabled (0x02..0x04) and NULL arguments reject. */
-    ASSERT_EQ(gy_pkid(&pkid, GY_SUITE_C448, enc, 57), GY_ERR_ARG);
+    /* c448 (SHA-512 tier) computes a pkid over the 57-byte encoding. */
+    enc[0] = GY_CURVE_TYPE_448;
+    memset(enc + 1, 0x01, 56);
+    ASSERT_EQ(gy_pkid(&pkid, GY_SUITE_C448, enc, 57), GY_OK);
+
+    /* The not-yet-enabled suite (0x04) and NULL arguments reject. */
+    ASSERT_EQ(gy_pkid(&pkid, GY_SUITE_H448_1024, enc, 57), GY_ERR_ARG);
     ASSERT_EQ(gy_pkid(&pkid, 0x00, enc, 57), GY_ERR_ARG);
     ASSERT_EQ(gy_pkid(NULL, GY_SUITE_C25519, enc, 33), GY_ERR_ARG);
     ASSERT_EQ(gy_pkid(&pkid, GY_SUITE_C25519, NULL, 0), GY_ERR_ARG);
@@ -161,9 +170,14 @@ TEST(info_kats)
     ASSERT_EQ(outlen, strlen("geryon.1.h25519_512.x3dh"));
     ASSERT_MEMEQ(out, "geryon.1.h25519_512.x3dh", outlen);
 
+    /* c448 is enabled and carries its own suite name. */
+    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_C448, "x3dh"), GY_OK);
+    ASSERT_EQ(outlen, strlen("geryon.1.c448.x3dh"));
+    ASSERT_MEMEQ(out, "geryon.1.c448.x3dh", outlen);
+
     /* Unknown / not-yet-enabled suites, NULL args, and short cap reject. */
     ASSERT_EQ(gy_info(out, sizeof(out), &outlen, 0x00, "x3dh"), GY_ERR_ARG);
-    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_C448, "x3dh"),
+    ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_H448_1024, "x3dh"),
               GY_ERR_ARG);
     ASSERT_EQ(gy_info(out, sizeof(out), &outlen, GY_SUITE_C25519, NULL),
               GY_ERR_ARG);

@@ -19,8 +19,8 @@
  * The table is `static const` rodata (suite.c): function pointers in read-only
  * memory are not a writable hijack surface, and dispatch keys on the public
  * suite ID, so there is no constant-time concern.  The suite set is CLOSED at
- * the four suites; only geryon_c25519 is enabled, the rest are
- * filled in as their primitives land
+ * the four suites; geryon_c25519, geryon_h25519_512, and geryon_c448 are
+ * enabled, geryon_h448_1024 is filled in as its primitives land.
  */
 
 /*
@@ -131,10 +131,10 @@ struct gy_suite_desc {
 
 /*
  * Look up the descriptor for a suite identifier, or NULL if the byte is not an
- * enabled suite.  Only geryon_c25519 (0x01) is enabled; every other
- * byte, including the reserved 0x00 and the not-yet-enabled 0x02..0x04,
- * returns NULL.  This is the one suite-lookup function in the library
- * (gy_suite folded in here).
+ * enabled suite.  geryon_c25519 (0x01), geryon_h25519_512 (0x02), and
+ * geryon_c448 (0x03) are enabled; every other byte, including the reserved 0x00
+ * and the not-yet-enabled geryon_h448_1024 (0x04), returns NULL.  This is the
+ * one suite-lookup function in the library (gy_suite folded in here).
  */
 const struct gy_suite_desc *gy_suite_desc(uint8_t suite_id);
 

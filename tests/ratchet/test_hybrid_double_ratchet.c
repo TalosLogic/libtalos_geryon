@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for src/ratchet/hybrid_double_ratchet.c (HYBRID_SPEC section 7,
- * GER-M5-07): the hybrid Double Ratchet under header encryption.  Built with
+ * Tests for src/ratchet/hybrid_double_ratchet.c (HYBRID_SPEC section 7):
+ * the hybrid Double Ratchet under header encryption.  Built with
  * -DGY_TEST_HOOKS for the ML-KEM ratchet determinism seams (D-PQ-3), the curve
  * keypair seam (D-DR-11), the hdr_salt seam (D-DR-15), and the op-counters.
  *

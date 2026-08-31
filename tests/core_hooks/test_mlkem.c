@@ -14,7 +14,7 @@
  * (mlkem512_kat.h, from the NIST ACVP FIPS 203 vectors) - the parameter set
  * and exact FIPS 203 conformance, independent of liboqs.
  *
- * Also carries the two RNG-shim tests deferred from GER-M5-02 (they need a real
+ * Also carries the two RNG-shim tests (they need a real
  * PQ keypair call): draw-routing and the fault-injection death test.
  */
 
@@ -137,7 +137,7 @@ TEST(implicit_rejection)
 }
 
 /*
- * GER-M5-02 task 6a: a real keypair call draws through geryon's registered RNG
+ * A real keypair call draws through geryon's registered RNG
  * shim (D-PQ-2).  Runs on both the DIST and pure-C configs (the build matrix),
  * proving neither backend bypasses OQS_randombytes.
  */
@@ -152,7 +152,7 @@ TEST(rng_draws_through_shim)
 }
 
 /*
- * GER-M5-02 task 6b: the shim ABORTS on a fault-injected RNG failure rather
+ * The shim ABORTS on a fault-injected RNG failure rather
  * than returning an unfilled buffer.  Forked so the abort() does not kill the
  * test runner; the parent asserts the child died on SIGABRT.
  */

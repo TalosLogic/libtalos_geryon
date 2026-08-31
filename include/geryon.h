@@ -65,7 +65,7 @@ extern "C" {
 /* ---- versioning -------------------------------------------------------- */
 
 #define GY_VERSION_MAJOR 1
-#define GY_VERSION_MINOR 1
+#define GY_VERSION_MINOR 2
 #define GY_VERSION_PATCH 0
 #define GY_PROTOCOL_VERSION 0x01 /* wire version byte (D-GEN-1). */
 

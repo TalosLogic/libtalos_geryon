@@ -19,6 +19,9 @@
 
 #include "gy_test.h"
 
+/* Custodian classical vertical runs under both classical suites. */
+static uint8_t g_suite;
+
 /* ---- minimal two-party mock store (public int-kind callbacks) ---------- */
 
 #define MOCK_MAX 16
@@ -187,13 +190,13 @@ bring_up(struct gy_custodian **a, struct mstore *am, gy_store_callbacks *acb,
 {
     mstore_bind(am, acb);
     mstore_bind(bm, bcb);
-    ASSERT_EQ(gy_custodian_create(a, GY_SUITE_C25519, acb, ACRED,
-                                  sizeof(ACRED) - 1, AUID, sizeof(AUID), ADID,
-                                  sizeof(ADID), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(a, g_suite, acb, ACRED, sizeof(ACRED) - 1,
+                                  AUID, sizeof(AUID), ADID, sizeof(ADID), NULL,
+                                  NULL, NULL),
               GY_OK);
-    ASSERT_EQ(gy_custodian_create(b, GY_SUITE_C25519, bcb, BCRED,
-                                  sizeof(BCRED) - 1, BUID, sizeof(BUID), BDID,
-                                  sizeof(BDID), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(b, g_suite, bcb, BCRED, sizeof(BCRED) - 1,
+                                  BUID, sizeof(BUID), BDID, sizeof(BDID), NULL,
+                                  NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(*a, 1000, n_opks), GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(*b, 1000, n_opks), GY_OK);
@@ -506,7 +509,7 @@ TEST(publish_bundle_reserves_distinct_opks_and_delete_on_use)
     /* Reuse is impossible: a DIFFERENT initiator using the same bundle (hence
      * the same, now-deleted OPK) cannot establish a second session. */
     mstore_bind(&cm, &ccb);
-    ASSERT_EQ(gy_custodian_create(&cinit, GY_SUITE_C25519, &ccb, CCRED,
+    ASSERT_EQ(gy_custodian_create(&cinit, g_suite, &ccb, CCRED,
                                   sizeof(CCRED) - 1, CUID, sizeof(CUID), CDID,
                                   sizeof(CDID), NULL, NULL, NULL),
               GY_OK);
@@ -530,19 +533,25 @@ TEST(publish_bundle_reserves_distinct_opks_and_delete_on_use)
 int
 main(void)
 {
-    ASSERT_EQ(gy_core_init(), GY_OK);
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(rotate_retains_history_and_old_bundle_still_receives),
+        GY_TEST(rotate_evicts_oldest_once_history_is_full),
+        GY_TEST(opk_replenish_consume_and_stats),
+        GY_TEST(
+            publish_opk_batch_is_parseable_and_registration_never_carries_one),
+        GY_TEST(find_and_delete_prekey),
+        GY_TEST(bundle_assemble_roundtrip_against_a_real_custodian),
+        GY_TEST(publish_bundle_reserves_distinct_opks_and_delete_on_use),
+    };
+    size_t s;
+    int rc = 0;
 
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(rotate_retains_history_and_old_bundle_still_receives),
-            GY_TEST(rotate_evicts_oldest_once_history_is_full),
-            GY_TEST(opk_replenish_consume_and_stats),
-            GY_TEST(
-                publish_opk_batch_is_parseable_and_registration_never_carries_one),
-            GY_TEST(find_and_delete_prekey),
-            GY_TEST(bundle_assemble_roundtrip_against_a_real_custodian),
-            GY_TEST(publish_bundle_reserves_distinct_opks_and_delete_on_use),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    ASSERT_EQ(gy_core_init(), GY_OK);
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

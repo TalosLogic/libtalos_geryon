@@ -7,3 +7,6 @@
 [submodule "third_party/liboqs"]
 	path = third_party/liboqs
 	url = https://github.com/open-quantum-safe/liboqs.git
+[submodule "third_party/ed448goldilocks-code"]
+	path = third_party/ed448goldilocks-code
+	url = git://git.code.sf.net/p/ed448goldilocks/code

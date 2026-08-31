@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Randomized hybrid soak (`slow`, HYBRID_SPEC §11, GER-M5-09 task 5): >= 10^4
+ * Randomized hybrid soak (`slow`, HYBRID_SPEC §11): >= 10^4
  * messages delivered over a bidirectional hybrid session, reordered within a
  * bounded window, with random drops and duplicate replays, crossing ML-KEM
  * refresh boundaries (small interval) and the KEM confirmation chain (Bob's

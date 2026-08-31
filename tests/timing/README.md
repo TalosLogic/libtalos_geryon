@@ -63,7 +63,23 @@ Validate one primitive to a clean verdict:
 ./build/tests/timing/geryon_dudect --target he_tag_reject
 ./build/tests/timing/geryon_dudect --target he_recv_trials
 ./build/tests/timing/geryon_dudect --target hybrid_x3dh_resp
+./build/tests/timing/geryon_dudect --target x448
+./build/tests/timing/geryon_dudect --target x448_wrap
+./build/tests/timing/geryon_dudect --target xed448_sign
 ```
+
+The classical 448 tier adds two targets over geryon's OWN
+secret-dependent 448 code, in `targets_c448.c`, both fixed-vs-random on the
+SECRET per framing rule 3: `x448_wrap` varies the secret scalar through the
+`gy_x448` wrapper (the clamp and the constant-time weak-key check the vendored
+gate target `x448` does not exercise), and `xed448_sign` varies the secret
+signing key through geryon's in-house XEd448 sign layer (live Z each trial).
+Two 448 candidates are deliberately NOT timed, because timing code that touches
+only public data can carry no secret leak: XEd448 VERIFY (public key, message,
+and signature are all public), and a classical c448 X3DH-responder target (the
+responder adds no geryon-owned secret-dependent branch beyond the X448 DH already
+covered by `x448_wrap`; it has no ML-KEM implicit-rejection step, so the
+`hybrid_x3dh_resp` rationale below does not carry over to the classical tier).
 
 ## Target framing (D-GEN-10)
 

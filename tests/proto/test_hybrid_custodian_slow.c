@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Hybrid custodian identity material (GER-M5-08b b-iii-1): a hybrid-suite
+ * Hybrid custodian identity material: a hybrid-suite
  * custodian generates its hybrid identity + signed prekey + OPK batch, seals
  * them as the hybrid idmat, and recovers them across a close/open round-trip.
  * create/open run real Argon2id (via gy_keystore_*), so this file is _slow.

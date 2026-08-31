@@ -138,8 +138,20 @@ gen_suite(uint8_t suite_id)
         snprintf(nm, sizeof(nm), "%02x_signed", suite_id);
         add_rec(nm, sd, sl);
 
-        snprintf(nm, sizeof(nm), "%02x_xeddsa", suite_id);
-        add_xeddsa(nm, sd, sl);
+        /*
+         * Prekey signature over signed_data.  The 25519 tier pins the XEdDSA
+         * bytes here: gy_xeddsa_sign_z is compiled unconditionally into
+         * geryon_core.  The c448 tier's XEd448 signer is a GY_TEST_HOOKS-only
+         * seam (gy_xed448_sign_z, the M0-L3 lesson - NOT the 25519 tier's
+         * unconditional _z), unavailable in this production-core-linked kex
+         * harness; its deterministic signature KAT lives in
+         * tests/core_hooks/test_xed448.c instead.  So c448 pins only the pure
+         * byte constructions (enc / pkid / signed_data) here.
+         */
+        if (d->curve_type == GY_CURVE_TYPE_25519) {
+            snprintf(nm, sizeof(nm), "%02x_xeddsa", suite_id);
+            add_xeddsa(nm, sd, sl);
+        }
         return;
     }
 

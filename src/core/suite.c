@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "ed25519.h"
+#include "ed448.h"
 #include "encode.h"
 #include "error.h"
 #include "hash.h"
@@ -13,13 +14,15 @@
 #include "mlkem.h"
 #include "suite.h"
 #include "x25519.h"
+#include "x448.h"
 
 /*
- * The enabled suites (D-GEN-7).  geryon_c25519 (classical) and geryon_h25519_512
- * (hybrid) are enabled; the two 448-tier suites are added as their primitives
- * land.  Ops are the core wrappers; the array-to-pointer parameter adjustment
- * makes the fixed-size wrapper prototypes assignable to the generic pointer
- * types with no cast.  Reserved sizes/ops stay 0/NULL.
+ * The enabled suites (D-GEN-7).  geryon_c25519 (classical), geryon_h25519_512
+ * (hybrid), and geryon_c448 (classical, 448 tier) are enabled; geryon_h448_1024
+ * is added as its primitives land.  Ops are the core wrappers; the
+ * array-to-pointer parameter adjustment makes the fixed-size wrapper prototypes
+ * assignable to the generic pointer types with no cast.  Reserved sizes/ops stay
+ * 0/NULL.
  */
 static const struct gy_suite_desc gy_suites[] = {
     {
@@ -83,6 +86,29 @@ static const struct gy_suite_desc gy_suites[] = {
         .dsa_keypair = gy_mldsa_keypair,
         .dsa_sign = gy_mldsa_sign,
         .dsa_verify = gy_mldsa_verify,
+    },
+    {
+        .suite_id = GY_SUITE_C448,
+        .curve_type = GY_CURVE_TYPE_448,
+        .is_hybrid = 0,
+        .name = "c448",
+
+        .curve_pk_len = 56,
+        .curve_sk_len = 56,
+        .dh_len = 56,
+        .sig_len = 114,
+        .hash_len = 64,
+        .f_len = 57,
+
+        .keypair = gy_x448_keypair,
+        .dh = gy_x448,
+        .sign = gy_xed448_sign,
+        .verify = gy_xed448_verify,
+
+        .hash = gy_sha512,
+        .hmac = gy_hmac_sha512_iov,
+        .hkdf_extract = gy_hkdf_sha512_extract_iov,
+        .hkdf_expand = gy_hkdf_sha512_expand,
     },
 };
 

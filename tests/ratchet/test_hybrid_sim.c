@@ -4,7 +4,7 @@
  *
  * The hybrid two-party simulator (tests/harness/gy_sim), driving a full hybrid
  * handshake + KEM confirmation + ratchet through the harness, and the hybrid
- * frame tamper matrix (HYBRID_SPEC §11.3, GER-M5-09 task 4): per-field
+ * frame tamper matrix (HYBRID_SPEC §11.3): per-field
  * corruption of the initial message (mlkem_ek, kem_ct, hybrid_flag) and of the
  * confirmation reply (confirm_ct), each rejected, plus base-key dedupe of a
  * replayed initial message.

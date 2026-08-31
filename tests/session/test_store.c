@@ -408,20 +408,26 @@ TEST(no_dynamic_allocation_footprint)
 int
 main(void)
 {
+    /* The store/commit vertical runs under both classical suites. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(commit_order_and_persist),
+        GY_TEST(commit_stops_at_failure),
+        GY_TEST(precommit_load_failure_untouched),
+        GY_TEST(staging_full_rejected),
+        GY_TEST(no_dynamic_allocation_footprint),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(commit_order_and_persist),
-            GY_TEST(commit_stops_at_failure),
-            GY_TEST(precommit_load_failure_untouched),
-            GY_TEST(staging_full_rejected),
-            GY_TEST(no_dynamic_allocation_footprint),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

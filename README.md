@@ -22,16 +22,18 @@ scheme, hash, and KEM strength move together.
 | `geryon_c25519` | 0x01 | X25519 | XEdDSA | SHA-256 |
 | `geryon_h25519_512` | 0x02 | X25519 + ML-KEM-512 | XEdDSA + ML-DSA-44 | SHA-256 |
 | `geryon_c448` | 0x03 | X448 | XEd448 | SHA-512 |
-| (reserved) | 0x04 | | | |
+| `geryon_h448_1024` (reserved) | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
 
-The classical suite (`geryon_c25519`) provides **no** post-quantum
-confidentiality; it exists for size/bandwidth-constrained deployments (32-byte
-X25519 keys vs. ~1 KB of ML-KEM material). The hybrid suite
-(`geryon_h25519_512`) mixes an ML-KEM secret into every X3DH DH and every
-Double Ratchet step, and dual-signs prekeys with XEdDSA and ML-DSA. A classical
-identity and a hybrid identity never interoperate; mixed deployments require
-distinct identities. Suite ID 0x04 (`geryon_h448_1024`) is reserved for a
-future 448-tier suite and is rejected before any cryptographic processing.
+The classical suites provide **no** post-quantum confidentiality. The smallest
+(`geryon_c25519`) exists for size/bandwidth-constrained deployments (32-byte
+X25519 keys vs. ~1 KB of ML-KEM material); `geryon_c448` is the CNSA-aligned
+classical high-security tier (X448 + XEd448, SHA-512) for a larger classical
+security margin. The hybrid suite (`geryon_h25519_512`) mixes an ML-KEM secret
+into every X3DH DH and every Double Ratchet step, and dual-signs prekeys with
+XEdDSA and ML-DSA. Identities of different suites never interoperate; mixed
+deployments require distinct identities. Suite ID 0x04 (`geryon_h448_1024`) is
+reserved for a future 448-tier hybrid suite and is rejected before any
+cryptographic processing.
 
 ## Using the library
 
@@ -108,8 +110,9 @@ messaging, the prekey lifecycle, SAK-authenticated requests, and restart
 persistence over `include/geryon.h` only. It doubles as a deterministic
 pass/fail smoke test (`ctest --test-dir build -R demo`). A parallel
 `geryon_hybrid_demo` runs the same lifecycle under `geryon_h25519_512`,
-additionally exercising the PQ-pending transition and the ratchet KEM refresh.
-See [examples/README.md](examples/README.md).
+additionally exercising the PQ-pending transition and the ratchet KEM refresh,
+and `geryon_c448_demo` runs it under the classical 448 tier. See
+[examples/README.md](examples/README.md).
 
 ## Building
 
@@ -125,7 +128,10 @@ cmake --build build
 Dependencies are vendored as pinned submodules under `third_party/`:
 libsodium 1.0.22 (classical primitives, built via ExternalProject), liboqs
 0.16.0 (ML-KEM and ML-DSA for the hybrid suite, built via ExternalProject),
-and monocypher 4.0.3 (compiled directly). All three are permissively licensed.
+libdecaf/ed448-goldilocks v1.0.3 (X448 and the 448 field/scalar/point
+primitives for the `geryon_c448` suite, the 448 C-source slice compiled
+directly), and monocypher 4.0.3 (compiled directly). All four are permissively
+licensed.
 
 ### Sanitizers
 

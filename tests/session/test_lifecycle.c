@@ -675,30 +675,42 @@ TEST(devrec_key_domain_separation)
 int
 main(void)
 {
+    /*
+     * The identity/session lifecycle runs under both classical
+     * suites; hybrid_key_change_pq_only keys on DH (h25519_512) and re-runs
+     * identically under each iteration.
+     */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(conditional_update_tofu),
+        GY_TEST(conditional_update_same_key_noop),
+        GY_TEST(key_change_fail_closed),
+        GY_TEST(hybrid_key_change_pq_only),
+        GY_TEST(accept_key_change_replaces),
+        GY_TEST(insert_activate_semantics),
+        GY_TEST(expiry_config_validation),
+        GY_TEST(expiry_counters_and_rollback),
+        GY_TEST(delete_device_zeroizes),
+        GY_TEST(delete_user_all_gone),
+        GY_TEST(devkey_pair_isolation),
+        GY_TEST(purge_device_leaves_other_user),
+        GY_TEST(purge_user_leaves_other_user),
+        GY_TEST(devrec_key_domain_separation),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
     DH = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL || DH == NULL)
+    if (DH == NULL)
         return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(conditional_update_tofu),
-            GY_TEST(conditional_update_same_key_noop),
-            GY_TEST(key_change_fail_closed),
-            GY_TEST(hybrid_key_change_pq_only),
-            GY_TEST(accept_key_change_replaces),
-            GY_TEST(insert_activate_semantics),
-            GY_TEST(expiry_config_validation),
-            GY_TEST(expiry_counters_and_rollback),
-            GY_TEST(delete_device_zeroizes),
-            GY_TEST(delete_user_all_gone),
-            GY_TEST(devkey_pair_isolation),
-            GY_TEST(purge_device_leaves_other_user),
-            GY_TEST(purge_user_leaves_other_user),
-            GY_TEST(devrec_key_domain_separation),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

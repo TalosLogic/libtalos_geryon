@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Tests for the KEM confirmation and PQ-pending state machine (HYBRID_SPEC
- * section 8, GER-M5-08a: engine mechanics).  The session/API wiring (persistence
- * and gy_pq_pending) is GER-M5-08b.  Built with -DGY_TEST_HOOKS.
+ * section 8: engine mechanics).  The session/API wiring (persistence
+ * and gy_pq_pending) is covered separately.  Built with -DGY_TEST_HOOKS.
  */
 
 #include <stdint.h>

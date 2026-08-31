@@ -2,12 +2,12 @@
 # Copyright (c) 2026 Jason Crawford
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Descriptor-discipline audit (GER-M1-09, D-GEN-7): the layers above core
+# Descriptor-discipline audit (D-GEN-7): the layers above core
 # (kex/, ratchet/, session/, proto/) must carry NO direct call to a core
 # primitive and NO suite-specific PQ size constant - everything routes through
-# the suite descriptor.  GER-M5-10 widened the scan from {kex, ratchet} to also
-# cover {session, proto} (the layers that gained PQ fields) and added the
-# suite-specific PQ primitive-size macros to the forbidden set.  This is the
+# the suite descriptor.  The scan covers {kex, ratchet, session, proto} (session
+# and proto gained PQ fields with the hybrid tier) and the
+# suite-specific PQ primitive-size macros are in the forbidden set.  This is the
 # mechanical half of the milestone exit criterion; reviewed exceptions (a
 # suite-INVARIANT primitive use, e.g. the fixed SHA-512 store-key derivation)
 # are recorded in the allowlist.
@@ -30,7 +30,7 @@ allowlist="$here/discipline_allowlist.txt"
 pattern='gy_x25519|gy_x448|gy_xeddsa|gy_xed448|gy_ed25519|gy_ed448'
 pattern="$pattern"'|gy_sha256|gy_sha512|gy_hmac_sha(256|512)'
 pattern="$pattern"'|gy_hkdf_sha(256|512)|crypto_[a-z]'
-# Suite-SPECIFIC PQ primitive-size constants (GER-M5-10): the ML-KEM/ML-DSA
+# Suite-SPECIFIC PQ primitive-size constants: the ML-KEM/ML-DSA
 # per-parameter-set sizes (GY_MLKEM512_*, GY_MLKEM1024_*, GY_MLDSA44_*,
 # GY_MLDSA87_*) belong to core's primitive wrappers only; above core, PQ sizes
 # come from desc->kem_*_len / desc->dsa_*_len.  The suite-AGNOSTIC maxima

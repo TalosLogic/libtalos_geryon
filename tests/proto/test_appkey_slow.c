@@ -18,6 +18,9 @@
 
 #include "gy_test.h"
 
+/* Custodian classical vertical runs under both classical suites. */
+static uint8_t g_suite;
+
 /* ---- minimal mock store (public int-kind callbacks) --------------------- */
 
 #define MOCK_MAX 8
@@ -178,9 +181,9 @@ static void
 bring_up(struct gy_custodian **a, struct mstore *am, gy_store_callbacks *acb)
 {
     mstore_bind(am, acb);
-    ASSERT_EQ(gy_custodian_create(a, GY_SUITE_C25519, acb, ACRED,
-                                  sizeof(ACRED) - 1, AUID, sizeof(AUID), ADID,
-                                  sizeof(ADID), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(a, g_suite, acb, ACRED, sizeof(ACRED) - 1,
+                                  AUID, sizeof(AUID), ADID, sizeof(ADID), NULL,
+                                  NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(*a, 1000, 0), GY_OK);
 }
@@ -409,15 +412,15 @@ TEST(appkey_domain_labels_are_distinct_from_each_other_and_from_x3dh)
      * ("x3dh", kex/x3dh.c) - each gy_suite_info output differs in length
      * or content, so no signature produced under one purpose can be
      * replayed as valid under another. */
-    ASSERT_EQ(gy_suite_info(cert_info, sizeof(cert_info), &cert_len,
-                            GY_SUITE_C25519, "appkey-cert"),
+    ASSERT_EQ(gy_suite_info(cert_info, sizeof(cert_info), &cert_len, g_suite,
+                            "appkey-cert"),
               GY_OK);
-    ASSERT_EQ(gy_suite_info(sign_info, sizeof(sign_info), &sign_len,
-                            GY_SUITE_C25519, "appkey"),
+    ASSERT_EQ(gy_suite_info(sign_info, sizeof(sign_info), &sign_len, g_suite,
+                            "appkey"),
               GY_OK);
-    ASSERT_EQ(gy_suite_info(x3dh_info, sizeof(x3dh_info), &x3dh_len,
-                            GY_SUITE_C25519, "x3dh"),
-              GY_OK);
+    ASSERT_EQ(
+        gy_suite_info(x3dh_info, sizeof(x3dh_info), &x3dh_len, g_suite, "x3dh"),
+        GY_OK);
 
     ASSERT_TRUE(cert_len != sign_len ||
                     memcmp(cert_info, sign_info, cert_len) != 0,
@@ -440,20 +443,26 @@ TEST(appkey_domain_labels_are_distinct_from_each_other_and_from_x3dh)
 int
 main(void)
 {
-    ASSERT_EQ(gy_core_init(), GY_OK);
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(generate_export_sign_and_verify_roundtrip),
+        GY_TEST(generate_twice_is_rejected_rotate_needs_one_first),
+        GY_TEST(rotate_retains_history_and_old_sak_still_works),
+        GY_TEST(rotate_evicts_oldest_once_history_is_full),
+        GY_TEST(
+            domain_separation_rejects_wrong_context_and_unframed_signatures),
+        GY_TEST(sign_never_returns_the_sak_private_key),
+        GY_TEST(
+            appkey_domain_labels_are_distinct_from_each_other_and_from_x3dh),
+    };
+    size_t s;
+    int rc = 0;
 
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(generate_export_sign_and_verify_roundtrip),
-            GY_TEST(generate_twice_is_rejected_rotate_needs_one_first),
-            GY_TEST(rotate_retains_history_and_old_sak_still_works),
-            GY_TEST(rotate_evicts_oldest_once_history_is_full),
-            GY_TEST(
-                domain_separation_rejects_wrong_context_and_unframed_signatures),
-            GY_TEST(sign_never_returns_the_sak_private_key),
-            GY_TEST(
-                appkey_domain_labels_are_distinct_from_each_other_and_from_x3dh),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    ASSERT_EQ(gy_core_init(), GY_OK);
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

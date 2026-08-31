@@ -434,20 +434,26 @@ TEST(uniform_failure)
 int
 main(void)
 {
+    /* The recv-path vertical runs under both classical suites. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(initiation_recv_roundtrip),
+        GY_TEST(established_recv_roundtrip),
+        GY_TEST(inactive_association_and_activation),
+        GY_TEST(dedupe_resend),
+        GY_TEST(uniform_failure),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(initiation_recv_roundtrip),
-            GY_TEST(established_recv_roundtrip),
-            GY_TEST(inactive_association_and_activation),
-            GY_TEST(dedupe_resend),
-            GY_TEST(uniform_failure),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

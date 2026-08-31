@@ -23,6 +23,9 @@
 #include "facade.h"
 #include "gy_test.h"
 
+/* Link tests run under both classical suites. */
+static uint8_t g_suite;
+
 static void
 make_key(struct gy_public_key *k, uint32_t pkid, uint8_t curve_type,
          size_t pk_len, uint8_t fill)
@@ -35,7 +38,7 @@ make_key(struct gy_public_key *k, uint32_t pkid, uint8_t curve_type,
 
 TEST(assemble_with_and_without_opk)
 {
-    const struct gy_suite_desc *desc = gy_suite_lookup(GY_SUITE_C25519);
+    const struct gy_suite_desc *desc = gy_suite_lookup(g_suite);
     struct gy_prekey_bundle reg;
     struct gy_public_key opk1, opk2;
     uint8_t regbuf[512], opk1_wire[128], opk2_wire[128];
@@ -114,7 +117,7 @@ TEST(assemble_with_and_without_opk)
 
 TEST(opk_batch_enumerate_and_slice)
 {
-    const struct gy_suite_desc *desc = gy_suite_lookup(GY_SUITE_C25519);
+    const struct gy_suite_desc *desc = gy_suite_lookup(g_suite);
     static const uint32_t pkids[3] = {0xAAAA0001u, 0xBBBB0002u, 0xCCCC0003u};
     struct gy_public_key opks[3];
     struct gy_prekey_bundle reg;
@@ -181,7 +184,7 @@ TEST(opk_batch_enumerate_and_slice)
 
 TEST(bundle_fingerprint_matches_self_and_validates)
 {
-    const struct gy_suite_desc *desc = gy_suite_lookup(GY_SUITE_C25519);
+    const struct gy_suite_desc *desc = gy_suite_lookup(g_suite);
     struct gy_prekey_bundle reg, reg2;
     struct gy_public_key opk;
     uint8_t regbuf[512], reg2buf[512], opk_wire[128], asm_buf[512];
@@ -271,15 +274,20 @@ main(void)
     /* gy_runtime_init (session/), not gy_core_init (core/): this file stays
      * within the session/proto symbol set a custodian-less server target
      * would actually link. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(assemble_with_and_without_opk),
+        GY_TEST(opk_batch_enumerate_and_slice),
+        GY_TEST(bundle_fingerprint_matches_self_and_validates),
+    };
+    size_t s;
+    int rc = 0;
+
     ASSERT_EQ(gy_runtime_init(), GY_OK);
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(assemble_with_and_without_opk),
-            GY_TEST(opk_batch_enumerate_and_slice),
-            GY_TEST(bundle_fingerprint_matches_self_and_validates),
-        };
-
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

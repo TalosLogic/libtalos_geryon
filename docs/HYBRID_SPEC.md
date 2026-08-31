@@ -15,8 +15,8 @@ specifications directly and are out of scope here except where
 cross-suite rules (downgrade rejection) apply.
 
 Design lineage: the architecture follows the libtalos_signal hybrid
-design (authoritative reference: implementation at
-`~/Source/libtalos_signal_archive/`, NOT its stale specs), with the
+design (authoritative reference: the archived libtalos_signal
+implementation, NOT its stale specs), with the
 deliberate changes listed in §1.2. It deliberately diverges from
 Signal's PQXDH and ML-KEM Braid; see `docs/PQ_COMPARISON.md` for the
 rationale.
@@ -1332,8 +1332,7 @@ classical suites and bare primitives only). Required:
 7. `docs/decisions/` - the implementer-decision register (D-* IDs
    cited throughout this spec)
 8. `docs/PQ_COMPARISON.md` - design rationale vs. Signal's PQ approach
-9. libtalos_signal archived implementation
-   (`~/Source/libtalos_signal_archive/`) - design lineage; NOT
+9. libtalos_signal archived implementation - design lineage; NOT
    normative for geryon
 10. Brendel et al., PKC 2022; Hashimoto et al., J. Cryptol. 2022 -
     deniable PQ AKE (background for §8)
@@ -1384,7 +1383,7 @@ classical suites and bare primitives only). Required:
   (unchanged): deniability (paper argument, §8.5) and CryptoVerif
   computational proofs (possible later phase).
 - `[RESOLVED 2026-07-04]` XEd448 constants verified against
-  xeddsa.pdf §6 (docs/decisions/xeddsa.md D-XED-8): hash = SHA-512,
+  the XEdDSA specification §6 (docs/decisions/xeddsa.md D-XED-8): hash = SHA-512,
   b = 456, encoded points/integers 57 bytes, signatures 2b = 114 B,
   hash_i prefix = 57-byte little-endian 2^456 - 1 - i. The 448-tier
   size tables in this document are confirmed correct. The 448-tier

@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(libtalos_geryon
-    VERSION 1.1.0
+    VERSION 1.2.0
     LANGUAGES C
 )
 
@@ -197,6 +197,172 @@ set_target_properties(oqs PROPERTIES
 )
 
 # -----------------------------------------------------------------------------
+# libdecaf / ed448goldilocks (pinned v1.0.3, e5cc624; git submodule).
+# DIRECT-compile integration of the 448 slice (D-XED-12 Build, amended
+# 2026-08-20; GER-M6-02): geryon compiles libdecaf's C sources for the 448 path
+# under its OWN static archive and runs libdecaf's Python generator via custom
+# commands. Deliberately NOT add_subdirectory and NOT ExternalProject, because
+# libdecaf's top-level project(... C CXX) forces a C++ toolchain (even though
+# zero C++ compiles into the static lib) and would leak its install()/CTest/
+# option namespace into geryon. The hard constraint is NO libstdc++ at runtime;
+# compiling only the C sources honors it. geryon owns a small enumerable copy of
+# libdecaf's 448 build graph (source list + generator commands + arch map),
+# re-diffed against upstream at each geryon-controlled pin bump.
+# -----------------------------------------------------------------------------
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(DECAF_SRC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ed448goldilocks-code")
+set(DECAF_GEN "${CMAKE_CURRENT_BINARY_DIR}/decaf448-generated")
+set(DECAF_TEMPLATE "${DECAF_SRC}/src/generator/template.py")
+
+# p448 arch selection: mirror third_party/.../src/CMakeLists.txt
+# (TARGET_ARCH_DIR_P448). Only arch_x86_64 and arch_ref64 are validated targets
+# for geryon; the pure-C arch_ref64 is the portable fallback (never arch_32,
+# which is the generic 32-bit path).
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+    set(DECAF_ARCH arch_x86_64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arch64")
+    set(DECAF_ARCH arch_ref64)
+else()
+    set(DECAF_ARCH arch_ref64)
+endif()
+message(STATUS "libdecaf448: p448 target arch = ${DECAF_ARCH}")
+
+file(MAKE_DIRECTORY
+    "${DECAF_GEN}/include/decaf"
+    "${DECAF_GEN}/c/p448"
+    "${DECAF_GEN}/c/ed448goldilocks")
+
+set(DECAF_GENERATED "")
+
+# Run template.py --per=<PER> [--item=<ITEM>] --guard=<GUARD> -o <OUT> <TMPL>.
+# Re-encodes libdecaf's src/generator/{,ed448goldilocks/}CMakeLists.txt for the
+# 448 path only. A macro (not a function) so DECAF_GENERATED accumulates in this
+# scope.
+macro(decaf_generate out per item guard tmpl)
+    if("${item}" STREQUAL "")
+        set(_decaf_itemarg "")
+    else()
+        set(_decaf_itemarg "--item=${item}")
+    endif()
+    add_custom_command(
+        OUTPUT "${DECAF_GEN}/${out}"
+        COMMAND "${Python3_EXECUTABLE}" "${DECAF_TEMPLATE}"
+            "--per=${per}" ${_decaf_itemarg} "--guard=${guard}"
+            -o "${DECAF_GEN}/${out}" "${DECAF_SRC}/src/${tmpl}"
+        DEPENDS "${DECAF_TEMPLATE}" "${DECAF_SRC}/src/${tmpl}"
+        COMMENT "libdecaf448: generating ${out}"
+        VERBATIM)
+    list(APPEND DECAF_GENERATED "${DECAF_GEN}/${out}")
+endmacro()
+
+macro(decaf_copy_header out src)
+    add_custom_command(
+        OUTPUT "${DECAF_GEN}/${out}"
+        COMMAND "${CMAKE_COMMAND}" -E copy
+            "${DECAF_SRC}/src/${src}" "${DECAF_GEN}/${out}"
+        DEPENDS "${DECAF_SRC}/src/${src}"
+        VERBATIM)
+    list(APPEND DECAF_GENERATED "${DECAF_GEN}/${out}")
+endmacro()
+
+# Public headers the 448 sources include (via <decaf.h>, which itself pulls in
+# BOTH curves' point_*.h, so curve25519's point header is generated too -
+# header only, no curve25519 code is compiled).
+decaf_generate("include/decaf.h"           global ""               "decaf.h"
+    "public_include/decaf.tmpl.h")
+decaf_generate("include/decaf/point_255.h" curve  curve25519       "decaf/point_255.h"
+    "per_curve/point.tmpl.h")
+decaf_generate("include/decaf/point_448.h" curve  ed448goldilocks  "decaf/point_448.h"
+    "per_curve/point.tmpl.h")
+decaf_generate("include/decaf/ed448.h"     curve  ed448goldilocks  "decaf/ed448.h"
+    "per_curve/eddsa.tmpl.h")
+decaf_copy_header("include/decaf/common.h"    "public_include/decaf/common.h")
+decaf_copy_header("include/decaf/shake.h"     "public_include/decaf/shake.h")
+decaf_copy_header("include/decaf/sha512.h"    "public_include/decaf/sha512.h")
+decaf_copy_header("include/decaf/spongerng.h" "public_include/decaf/spongerng.h")
+
+# Generated internal p448 field header + sources.
+decaf_generate("c/p448/f_field.h"  field p448 "p448/f_field.h"
+    "per_field/f_field.tmpl.h")
+decaf_generate("c/p448/f_generic.c" field p448 "p448/f_generic.c"
+    "per_field/f_generic.tmpl.c")
+
+# Generated ed448goldilocks curve sources.
+decaf_generate("c/ed448goldilocks/scalar.c"    curve ed448goldilocks "ed448goldilocks/scalar.c"
+    "per_curve/scalar.tmpl.c")
+decaf_generate("c/ed448goldilocks/decaf.c"     curve ed448goldilocks "ed448goldilocks/decaf.c"
+    "per_curve/decaf.tmpl.c")
+decaf_generate("c/ed448goldilocks/elligator.c" curve ed448goldilocks "ed448goldilocks/elligator.c"
+    "per_curve/elligator.tmpl.c")
+decaf_generate("c/ed448goldilocks/eddsa.c"     curve ed448goldilocks "ed448goldilocks/eddsa.c"
+    "per_curve/eddsa.tmpl.c")
+
+add_custom_target(decaf448_generate DEPENDS ${DECAF_GENERATED})
+
+# The 448 source slice. Static (checked-in) sources come from the submodule
+# tree; generated .c come from DECAF_GEN. NOTE: eddsa.c defines
+# decaf_ed448_sign/verify (RFC 8032), used ONLY by the 448 validation gate
+# (D-XED-12 scope): they are archived here but geryon's own code never
+# references them, so production consumers drop eddsa.o at final link.
+set(DECAF_448_SOURCES
+    "${DECAF_SRC}/src/utils.c"
+    "${DECAF_SRC}/src/shake.c"
+    "${DECAF_SRC}/src/sha512.c"
+    "${DECAF_SRC}/src/spongerng.c"
+    "${DECAF_SRC}/src/p448/${DECAF_ARCH}/f_impl.c"
+    "${DECAF_SRC}/src/p448/f_arithmetic.c"
+    "${DECAF_SRC}/src/ed448goldilocks/decaf_tables.c"
+    "${DECAF_GEN}/c/p448/f_generic.c"
+    "${DECAF_GEN}/c/ed448goldilocks/scalar.c"
+    "${DECAF_GEN}/c/ed448goldilocks/decaf.c"
+    "${DECAF_GEN}/c/ed448goldilocks/elligator.c"
+    "${DECAF_GEN}/c/ed448goldilocks/eddsa.c"
+)
+set_source_files_properties(
+    "${DECAF_GEN}/c/p448/f_generic.c"
+    "${DECAF_GEN}/c/ed448goldilocks/scalar.c"
+    "${DECAF_GEN}/c/ed448goldilocks/decaf.c"
+    "${DECAF_GEN}/c/ed448goldilocks/elligator.c"
+    "${DECAF_GEN}/c/ed448goldilocks/eddsa.c"
+    PROPERTIES GENERATED 1)
+
+add_library(decaf448 STATIC ${DECAF_448_SOURCES})
+add_dependencies(decaf448 decaf448_generate)
+set_target_properties(decaf448 PROPERTIES POSITION_INDEPENDENT_CODE True)
+# third_party code is not held to geryon's warning bar (same as monocypher).
+target_compile_options(decaf448 PRIVATE -w)
+# PUBLIC: the generated decaf.h API dir is needed both by decaf448's OWN
+# sources (they #include <decaf.h>) and by geryon's x448.c when decaf448 is
+# linked in; it is the only libdecaf interface geryon code consumes.
+target_include_directories(decaf448 PUBLIC "${DECAF_GEN}/include")
+# PRIVATE: the internal field/arch + generated per-field headers are the
+# archive's own compile concern and must NOT propagate to geryon_core. The
+# generated per-field header (f_field.h) lives under DECAF_GEN/c/p448.
+target_include_directories(decaf448 PRIVATE
+    "${DECAF_SRC}/src/include"
+    "${DECAF_SRC}/src/include/${DECAF_ARCH}"
+    "${DECAF_SRC}/src/p448"
+    "${DECAF_SRC}/src/p448/${DECAF_ARCH}"
+    "${DECAF_GEN}/c/p448"
+    "${DECAF_GEN}/c/ed448goldilocks"
+)
+
+# The INTERNAL gf field headers are NOT part of decaf448's interface (they must
+# not reach the rest of geryon_core). GER-M6-04's ed448.c is the ONE geryon
+# translation unit that borrows them, applied PRIVATE to that source alone.
+# Exposed here as a variable for that ticket (approach #3 shim, D-XED-13).
+set(GERYON_DECAF448_INTERNAL_INCLUDES
+    "${DECAF_SRC}/src/include"
+    "${DECAF_SRC}/src/include/${DECAF_ARCH}"
+    "${DECAF_SRC}/src/p448"
+    "${DECAF_SRC}/src/p448/${DECAF_ARCH}"
+    "${DECAF_GEN}/c/p448"
+    "${DECAF_GEN}/include"
+    CACHE INTERNAL "Internal libdecaf gf field include dirs for src/core/ed448.c only")
+
+# -----------------------------------------------------------------------------
 # geryon_core static library (Layer 1).
 # -----------------------------------------------------------------------------
 
@@ -207,6 +373,15 @@ add_library(geryon_core STATIC ${GERYON_CORE_SOURCES})
 target_include_directories(geryon_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
 )
+# PRIVATE: x448.c needs libdecaf's PUBLIC decaf.h (RFC 7748 X448) and ed448.c
+# additionally needs the INTERNAL gf field headers (D-XED-13 R2 approach-#3
+# shim). GERYON_DECAF448_INTERNAL_INCLUDES carries both (src/include has
+# word.h/field.h; DECAF_GEN/include has decaf.h). Applied PRIVATE at the target
+# level for robustness (a per-source property did not reliably apply): the
+# internal-header PATH is available to all core objects, but only ed448.c
+# #includes field.h, so the layering rule (only ed448.c uses internal gf) still
+# holds in code. These dirs are PRIVATE, so nothing propagates above Layer 1.
+target_include_directories(geryon_core PRIVATE ${GERYON_DECAF448_INTERNAL_INCLUDES})
 target_compile_options(geryon_core PRIVATE ${GERYON_WARNINGS})
 # Production interlock (src/core/error.h): PRIVATE so it marks only the shipped
 # library objects, never propagating to test targets that recompile sources
@@ -219,7 +394,16 @@ target_compile_definitions(geryon_core PRIVATE GY_PRODUCTION_BUILD)
 # them anyway). PRIVATE only appeared to work where a system libsodium/liboqs
 # was installed on the compiler's default include path.
 target_link_libraries(geryon_core PUBLIC sodium monocypher oqs)
-add_dependencies(geryon_core libsodium_build liboqs_build)
+# libdecaf 448 archive: PRIVATE (D-XED-12) - only core/x448.c and core/ed448.c
+# (GER-M6-04) call into it; its public decaf.h include propagates to geryon_core
+# sources via the INTERFACE include, but the archive itself does not propagate
+# to higher layers. The internal gf headers reach ONLY ed448.c (GER-M6-04),
+# via GERYON_DECAF448_INTERNAL_INCLUDES.
+target_link_libraries(geryon_core PRIVATE decaf448)
+# ed448.c includes libdecaf's generated headers (decaf.h + the internal gf
+# field headers), so the generator must run before geryon_core's objects
+# compile, not merely before it links.
+add_dependencies(geryon_core libsodium_build liboqs_build decaf448_generate)
 
 # -----------------------------------------------------------------------------
 # geryon_kex static library (Layer 2). Includes core/ headers only; ratchet/

@@ -14,7 +14,7 @@
 | Reference | Hybrid key exchange in SSH (mlkem768x25519-sha256) | datatracker.ietf.org (draft-ietf-sshm-mlkem-hybrid-kex) |
 
 The Talos rows cite the predecessor library's specs, which live in
-the archive repo (`~/Source/libtalos_signal_archive/`), not in this
+the archived libtalos_signal repository, not in this
 repository.
 
 ---
@@ -41,9 +41,9 @@ Neither is strictly better. Signal optimizes for a billion phones on bad
 networks; Talos optimizes for security posture and implementation simplicity.
 Section 6 summarizes what geryon should take from each.
 
-> **Note on parameter sets:** the Talos specs (archive repo
-> `docs/specs/`) are out of date; the authoritative reference is the
-> archived implementation at `~/Source/libtalos_signal_archive/`.
+> **Note on parameter sets:** the Talos specs (in the archived
+> repository) are out of date; the authoritative reference is the
+> archived libtalos_signal implementation.
 > Confirmed from that code: the hybrid
 > modules use **ML-KEM-512 + ML-DSA-44** (800-byte pk, 768-byte ct,
 > 2420-byte signatures), the signed-prekey signatures cover

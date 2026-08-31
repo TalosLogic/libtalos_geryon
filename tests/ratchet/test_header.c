@@ -50,8 +50,10 @@ TEST(flag_and_suite_checks)
     memset(h.ratchet_pk, 0x11, D->curve_pk_len);
     ASSERT_EQ(gy_dr_header_encode(D, &h, buf, sizeof(buf), &outlen), GY_OK);
 
-    /* Wrong curve_type in the low byte is a cross-suite abort. */
-    buf[3] = GY_CURVE_TYPE_448;
+    /* Wrong curve_type in the low byte is a cross-suite abort (pick a type that
+     * differs from the running suite so this holds at both tiers). */
+    buf[3] = (D->curve_type == GY_CURVE_TYPE_448) ? GY_CURVE_TYPE_25519
+                                                  : GY_CURVE_TYPE_448;
     ASSERT_EQ(gy_dr_header_decode(D, &g, buf, outlen, &consumed), GY_ERR_STATE);
 
     /* A reserved / HE flag bit set is rejected (must be zero on the wire). */
@@ -81,18 +83,25 @@ TEST(bounds)
 int
 main(void)
 {
+    /* Every case is descriptor-driven (D->curve_pk_len), so the
+     * header vertical runs unchanged under both classical suites. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(round_trip_and_wire_size),
+        GY_TEST(flag_and_suite_checks),
+        GY_TEST(bounds),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(round_trip_and_wire_size),
-            GY_TEST(flag_and_suite_checks),
-            GY_TEST(bounds),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

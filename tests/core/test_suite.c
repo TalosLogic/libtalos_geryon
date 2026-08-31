@@ -87,11 +87,13 @@ TEST(enabled_suites)
 {
     unsigned i;
 
-    /* c25519 (0x01) and h25519_512 (0x02) resolve; every other byte is NULL. */
+    /* c25519 (0x01), h25519_512 (0x02), and c448 (0x03) resolve; every other
+     * byte (including the reserved h448_1024, 0x04) is NULL. */
     for (i = 0; i <= 0xff; i++) {
         const struct gy_suite_desc *d = gy_suite_desc((uint8_t)i);
-        if (i == GY_SUITE_C25519 || i == GY_SUITE_H25519_512)
-            ASSERT_TRUE(d != NULL, "25519-tier suite enabled");
+        if (i == GY_SUITE_C25519 || i == GY_SUITE_H25519_512 ||
+            i == GY_SUITE_C448)
+            ASSERT_TRUE(d != NULL, "enabled suite resolves");
         else
             ASSERT_TRUE(d == NULL, "other suite NULL");
     }

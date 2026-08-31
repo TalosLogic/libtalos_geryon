@@ -16,6 +16,10 @@
 
 #include "gy_test.h"
 
+/* The custodian classical vertical runs under both classical suites;
+ * every gy_custodian_create / suite_id assertion keys on g_suite. */
+static uint8_t g_suite;
+
 /* ---- minimal mock store (public gy_store_callbacks, int kind) ---------- */
 
 #define MOCK_MAX 8
@@ -37,6 +41,9 @@ struct mstore {
     struct gy_custodian *c; /* set by a test once create/open has run, so
                              * guard_check can inspect c->active (D-GEN-8) */
     int guard_fail;
+    int store_identity_fail; /* when armed, m_store_identity returns an error
+                              * without writing, to exercise the idmat
+                              * persist-failure path */
 };
 
 static struct mrec *
@@ -141,6 +148,8 @@ m_store_identity(void *ctx, const uint8_t *blob, size_t blob_len)
     struct mstore *m = ctx;
 
     guard_check(m);
+    if (m->store_identity_fail)
+        return GY_ERR_STATE;
     if (blob_len > MOCK_BLOB)
         return GY_ERR_ARG;
     if (blob_len > 0)
@@ -200,9 +209,9 @@ TEST(create_close_open_roundtrip_recovers_material)
     size_t ptlen;
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(
-                  &c, GY_SUITE_C25519, &cb, (const uint8_t *)cred, strlen(cred),
-                  uid, sizeof(uid) - 1, did, sizeof(did) - 1, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), uid, sizeof(uid) - 1, did,
+                                  sizeof(did) - 1, NULL, NULL, NULL),
               GY_OK);
     ASSERT_TRUE(c != NULL, "created custodian");
 
@@ -219,7 +228,7 @@ TEST(create_close_open_roundtrip_recovers_material)
     ASSERT_EQ(gy_custodian_open(&c, &cb, (const uint8_t *)cred, strlen(cred)),
               GY_OK);
     ASSERT_TRUE(c != NULL, "reopened custodian");
-    ASSERT_EQ(c->suite_id, GY_SUITE_C25519);
+    ASSERT_EQ(c->suite_id, g_suite);
     ASSERT_EQ(c->self_uid_len, sizeof(uid) - 1);
     ASSERT_MEMEQ(c->self_uid, uid, sizeof(uid) - 1);
     ASSERT_EQ(c->self_did_len, sizeof(did) - 1);
@@ -245,9 +254,9 @@ TEST(wrong_credential_open_is_uniform_error)
     const char *wrong = "wrong credential";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred, strlen(cred), NULL, 0,
-                                  NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
     gy_custodian_close(c);
 
@@ -263,9 +272,9 @@ TEST(reset_wipes_and_returns_to_absent)
     const char *cred = "reset test credential";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred, strlen(cred), NULL, 0,
-                                  NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_reset(c), GY_OK);
     ASSERT_EQ(m.identity_len, 0);
@@ -289,9 +298,9 @@ TEST(change_credential_rewraps_and_preserves_material)
     size_t ptlen;
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred1, strlen(cred1), NULL,
-                                  0, NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred1,
+                                  strlen(cred1), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
 
     ASSERT_EQ(c->sealed_store.store_record(c->sealed_store.ctx, 1, rec_id,
@@ -343,9 +352,9 @@ TEST(handle_opacity_zero_invalid_and_stale_after_close)
     uint32_t key_id;
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred, strlen(cred), NULL, 0,
-                                  NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
 
     /* 0 is always invalid. */
@@ -391,9 +400,9 @@ TEST(slot_table_exhausted)
     int i;
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred, strlen(cred), NULL, 0,
-                                  NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
 
     for (i = 0; i < GY_CUSTODIAN_MAX_SLOTS; i++)
@@ -414,9 +423,9 @@ TEST(reentrancy_guard_is_armed_during_store_identity_callback)
     const char *cred = "guard test credential";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &cb,
-                                  (const uint8_t *)cred, strlen(cred), NULL, 0,
-                                  NULL, 0, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
               GY_OK);
     m.c = c; /* arm the check: guard_check now inspects c->active */
 
@@ -430,21 +439,63 @@ TEST(reentrancy_guard_is_armed_during_store_identity_callback)
     gy_custodian_close(c);
 }
 
+/* The idmat persist-failure path.  When the app store's
+ * store_identity callback fails while the freshly generated identity material is
+ * being sealed and persisted, create must surface the error, leave no
+ * half-written identity blob behind, and release its slot so a subsequent create
+ * on the same store succeeds.  The plaintext idmat is wiped regardless: it lives
+ * in a gy_guarded_alloc that cust_seal_and_persist_idmat frees (zeroizing) before
+ * the persist call, on every path (source-audited for the classical and hybrid
+ * seal-and-persist helpers alike). */
+TEST(persist_failure_surfaces_and_leaves_no_blob)
+{
+    static struct mstore m;
+    gy_store_callbacks cb;
+    struct gy_custodian *c = NULL;
+    const char *cred = "persist failure credential";
+    int rc;
+
+    mstore_bind(&m, &cb);
+    m.store_identity_fail = 1;
+    rc = gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                             strlen(cred), NULL, 0, NULL, 0, NULL, NULL, NULL);
+    ASSERT_TRUE(rc != GY_OK, "create must fail when the idmat persist fails");
+    ASSERT_EQ(m.identity_len, 0); /* no half-written bootstrap/idmat blob */
+
+    /* Defined state: the failed create released its slot and left the store
+     * untouched, so a create with the store repaired succeeds. */
+    m.store_identity_fail = 0;
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), NULL, 0, NULL, 0, NULL, NULL,
+                                  NULL),
+              GY_OK);
+    ASSERT_TRUE(c != NULL, "created custodian after repair");
+    ASSERT_TRUE(m.identity_len > 0, "identity blob persisted after repair");
+    gy_custodian_close(c);
+}
+
 int
 main(void)
 {
-    ASSERT_EQ(gy_core_init(), GY_OK);
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(create_close_open_roundtrip_recovers_material),
+        GY_TEST(wrong_credential_open_is_uniform_error),
+        GY_TEST(reset_wipes_and_returns_to_absent),
+        GY_TEST(change_credential_rewraps_and_preserves_material),
+        GY_TEST(handle_opacity_zero_invalid_and_stale_after_close),
+        GY_TEST(slot_table_exhausted),
+        GY_TEST(reentrancy_guard_is_armed_during_store_identity_callback),
+        GY_TEST(persist_failure_surfaces_and_leaves_no_blob),
+    };
+    size_t s;
+    int rc = 0;
 
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(create_close_open_roundtrip_recovers_material),
-            GY_TEST(wrong_credential_open_is_uniform_error),
-            GY_TEST(reset_wipes_and_returns_to_absent),
-            GY_TEST(change_credential_rewraps_and_preserves_material),
-            GY_TEST(handle_opacity_zero_invalid_and_stale_after_close),
-            GY_TEST(slot_table_exhausted),
-            GY_TEST(reentrancy_guard_is_armed_during_store_identity_callback),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    ASSERT_EQ(gy_core_init(), GY_OK);
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

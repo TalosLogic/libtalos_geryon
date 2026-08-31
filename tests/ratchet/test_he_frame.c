@@ -20,15 +20,19 @@ static const struct gy_suite_desc *D;
 static const uint64_t TS = 0x0000000155667788ull;
 #define AEAD GY_AEAD_CHACHA20POLY1305
 
-/* Classical frame overhead before the payload: version || suite_id ||
- * hdr_salt(16) || enc_header_len(2) || enc_header(60).  enc_header is the
- * 44-byte c25519 header plus a 16-byte tag. */
-#define C25519_ENC_HEADER 60
-#define C25519_FRAME_OVERHEAD (2 + GY_HE_SALT_LEN + 2 + C25519_ENC_HEADER)
+/*
+ * Classical enc_header and frame overhead as a function of the suite descriptor:
+ * enc_header = flags(4) || ratchet_pk(curve_pk_len) || pn(4) ||
+ * n(4) || AEAD tag(16); the header AEAD is ChaCha20-Poly1305 here, tag 16.  For
+ * c25519 this is 4+32+8+16 = 60, for c448 4+56+8+16 = 84 - the same fixed value
+ * the ratchet enforces per D-DR-16, validated at both tiers.
+ */
+#define ENC_HEADER_LEN(d) (4 + (d)->curve_pk_len + 8 + 16)
+#define FRAME_OVERHEAD(d) (2 + GY_HE_SALT_LEN + 2 + ENC_HEADER_LEN(d))
 
 static void
 do_handshake(struct gy_dr_secrets *sa, struct gy_dr_secrets *sb, uint8_t *ad,
-             size_t *adlen, uint8_t bob_spk_pub[32],
+             size_t *adlen, uint8_t bob_spk_pub[GY_CURVE_PK_MAX],
              struct gy_keypair *bob_spk_kp)
 {
     struct gy_keypair alice_ik, bob_ik, ek, bob_opk[1];
@@ -63,7 +67,7 @@ do_handshake(struct gy_dr_secrets *sa, struct gy_dr_secrets *sb, uint8_t *ad,
     ASSERT_EQ(gy_x3dh_respond(D, sb, adb, &adbl, &ref, &local, prefix, prefl),
               GY_OK);
 
-    memcpy(bob_spk_pub, bundle.spk.pk, 32);
+    memcpy(bob_spk_pub, bundle.spk.pk, D->curve_pk_len);
     *bob_spk_kp = bob_spk.kp;
 }
 
@@ -73,7 +77,7 @@ TEST(frame_overhead)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wire[256];
     size_t adl, wirelen, ptlen = 5;
 
@@ -85,11 +89,11 @@ TEST(frame_overhead)
               GY_OK);
 
     /* version || suite_id || salt || len || enc_header || payload(pt + tag). */
-    ASSERT_EQ(wirelen, (size_t)(C25519_FRAME_OVERHEAD + ptlen + 16));
+    ASSERT_EQ(wirelen, (size_t)(FRAME_OVERHEAD(D) + ptlen + 16));
     ASSERT_EQ(wire[0], GY_WIRE_VERSION);
-    ASSERT_EQ(wire[1], GY_SUITE_C25519);
+    ASSERT_EQ(wire[1], D->suite_id);
     ASSERT_EQ((size_t)gy_be16_get(wire + 2 + GY_HE_SALT_LEN),
-              C25519_ENC_HEADER);
+              ENC_HEADER_LEN(D));
 
     gy_dr_free(&alice);
 }
@@ -101,7 +105,7 @@ TEST(init_mapping_roles)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t exp_hka[32], exp_nhkb[32];
     uint8_t wire[256], out[256];
     size_t adl, wirelen, outlen;
@@ -154,7 +158,7 @@ TEST(enc_header_len_rejected)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wire[256], out[256];
     size_t adl, wirelen, outlen;
 
@@ -166,7 +170,7 @@ TEST(enc_header_len_rejected)
                             (const uint8_t *)"x", 1, ad, adl),
               GY_OK);
     /* Claim a different (still <= 65535) enc_header length. */
-    gy_be16_put(wire + 2 + GY_HE_SALT_LEN, C25519_ENC_HEADER + 1);
+    gy_be16_put(wire + 2 + GY_HE_SALT_LEN, ENC_HEADER_LEN(D) + 1);
     ASSERT_EQ(
         gy_dr_decrypt(&bob, out, sizeof(out), &outlen, wire, wirelen, ad, adl),
         GY_ERR_ARG);
@@ -181,7 +185,7 @@ TEST(bad_prefix_rejected)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wire[256], out[256], save;
     size_t adl, wirelen, outlen;
 
@@ -193,7 +197,8 @@ TEST(bad_prefix_rejected)
                             (const uint8_t *)"x", 1, ad, adl),
               GY_OK);
     save = wire[1];
-    wire[1] = GY_SUITE_C448; /* cross-suite */
+    /* Cross-suite: a suite byte other than the running one (holds at both tiers). */
+    wire[1] = (D->suite_id == GY_SUITE_C448) ? GY_SUITE_C25519 : GY_SUITE_C448;
     ASSERT_EQ(
         gy_dr_decrypt(&bob, out, sizeof(out), &outlen, wire, wirelen, ad, adl),
         GY_ERR_STATE);
@@ -214,10 +219,10 @@ TEST(cross_splice_rejected)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wa[256], wb[256], spliced[256], out[256];
     size_t adl, la, lb, slen, outlen;
-    size_t hwlen = GY_HE_SALT_LEN + 2 + C25519_ENC_HEADER;
+    size_t hwlen = GY_HE_SALT_LEN + 2 + ENC_HEADER_LEN(D);
 
     do_handshake(&sa, &sb, ad, &adl, bob_spk_pub, &bob_spk_kp);
     ASSERT_EQ(gy_dr_init_bob(&bob, D, AEAD, &sb, &bob_spk_kp), GY_OK);
@@ -251,7 +256,7 @@ TEST(no_plaintext_header)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wire[256], rpk[32];
     size_t adl, wirelen, i, msg;
 
@@ -274,18 +279,26 @@ TEST(no_plaintext_header)
 int
 main(void)
 {
+    /* The HE wire/state cases run under both classical suites; the
+     * frame overhead and enc_header length are validated at each tier via the
+     * descriptor-parameterized FRAME_OVERHEAD / ENC_HEADER_LEN. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(frame_overhead),          GY_TEST(init_mapping_roles),
+        GY_TEST(enc_header_len_rejected), GY_TEST(bad_prefix_rejected),
+        GY_TEST(cross_splice_rejected),   GY_TEST(no_plaintext_header),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(frame_overhead),          GY_TEST(init_mapping_roles),
-            GY_TEST(enc_header_len_rejected), GY_TEST(bad_prefix_rejected),
-            GY_TEST(cross_splice_rejected),   GY_TEST(no_plaintext_header),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

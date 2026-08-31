@@ -3,6 +3,41 @@
 Broad strokes per release. Architecture and rationale live in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+## [1.2.0] [2026-08-28]
+
+The classical high-security tier. Adds `geryon_c448` (X448 + XEd448, SHA-512):
+a CNSA-aligned classical suite for deployments that want a larger classical
+security margin without post-quantum material. Every change is additive over
+v1.0.0; the frozen v1.0.0 ABI, wire format (`protocol_version` 0x01), and
+stored-blob formats are unchanged. As with every suite, a `geryon_c448`
+identity never interoperates with any other suite: the suite is pinned per
+identity and there is no downgrade path. libdecaf (ed448-goldilocks, MIT) joins
+libsodium as a runtime dependency, providing the 448 field, scalar, and point
+primitives.
+
+- **Classical 448 key agreement and ratchet.** X3DH, the Double Ratchet with
+  mandatory header encryption, and Sesame session management all run at the 448
+  tier through the suite descriptor: 56-byte X448 keys, 114-byte XEd448
+  signatures, SHA-512 KDF chains. No protocol code is 448-specific; the tier is
+  a descriptor row plus the two new primitive wrappers.
+
+- **In-house XEd448, library primitives.** X448 wraps libdecaf's RFC 7748
+  ladder. XEd448 sign AND verify are geryon's own spec composition (XEdDSA
+  specification §6, the birationally-equivalent curve) over libdecaf's field,
+  scalar, and point primitives; RFC 8032 Ed448 (SHAKE256, the 4-isogenous
+  curve) is a different scheme and is never used in production, only as a
+  validation-gate oracle. The vendored libdecaf 448 slice is direct-compiled
+  under geryon's build, so no C++ runtime is linked.
+
+- **Custody, prekeys, SAK, and delete-on-use at 448.** The custodian, sealed
+  identity material, prekey lifecycle (SPK rotation with history, OPK
+  replenish/publish), the signed application-key cluster (XEd448), and
+  one-time-prekey delete-on-use all handle `geryon_c448` identities. No public
+  signature changed; every wire object self-describes via its suite byte.
+
+- **Worked example.** The `examples/` driver runs the full lifecycle under
+  `geryon_c448`, one tier up from the classical `geryon_c25519` example.
+
 ## [1.1.0] [2026-08-20]
 
 The hybrid flagship suite. Adds `geryon_h25519_512` (X25519 + ML-KEM-512,

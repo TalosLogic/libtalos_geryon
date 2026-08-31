@@ -329,23 +329,40 @@ TEST(teardown_zeroization)
 int
 main(void)
 {
+    /*
+     * The gy_sim conversation/property cases are descriptor-driven
+     * and run under both classical suites.  The three cases keyed on c25519 wire
+     * offsets (OFF_IK_ID / OFF_SPK_ID depend on curve_pk_len) or that use c448 as
+     * the "other" suite (dr_message_tamper_noop, cross_version_suite) run under
+     * c25519 only; the c448-tier initial-message negative matrix and cross-suite
+     * rejection are covered at c448 by test_x3dh_c448 and the
+     * consolidated 448 negative matrix.
+     */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case generic[] = {
+        GY_TEST(full_conversation),    GY_TEST(resend_convergence),
+        GY_TEST(consumed_opk_replay),  GY_TEST(junk_message_opk_retention),
+        GY_TEST(teardown_zeroization),
+    };
+    static const struct gy_test_case c25519_only[] = {
+        GY_TEST(initial_message_tamper_matrix),
+        GY_TEST(dr_message_tamper_noop),
+        GY_TEST(cross_version_suite),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(full_conversation),
-            GY_TEST(resend_convergence),
-            GY_TEST(consumed_opk_replay),
-            GY_TEST(junk_message_opk_retention),
-            GY_TEST(initial_message_tamper_matrix),
-            GY_TEST(dr_message_tamper_noop),
-            GY_TEST(cross_version_suite),
-            GY_TEST(teardown_zeroization),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(generic, sizeof(generic) / sizeof(generic[0]));
+        if (suites[s] == GY_SUITE_C25519)
+            rc |= gy_test_run(c25519_only,
+                              sizeof(c25519_only) / sizeof(c25519_only[0]));
     }
+    return rc;
 }

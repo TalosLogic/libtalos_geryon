@@ -62,7 +62,10 @@ TEST(sessionid_cross_suite_rejected)
     ASSERT_EQ(gy_keypair_generate(D, &ek), GY_OK);
     memset(&s, 0, sizeof(s));
 
-    ik.pub.curve_type = GY_CURVE_TYPE_448; /* not the pinned suite */
+    /* A curve_type other than the running suite's is not the pinned suite. */
+    ik.pub.curve_type = (D->curve_type == GY_CURVE_TYPE_448)
+                            ? GY_CURVE_TYPE_25519
+                            : GY_CURVE_TYPE_448;
     ASSERT_EQ(gy_session_id(&s, D, &ik.pub, &ek.pub), GY_ERR_STATE);
 }
 
@@ -384,7 +387,7 @@ TEST(user_blob_roundtrip)
 /*
  * Hand-build a hybrid session (base DR state + all PQ fields, section 7.2/8)
  * and round-trip it through the blob: the added PQ serialization and the
- * pq_pending byte must survive exactly (GER-M5-08b task 4).
+ * pq_pending byte must survive exactly.
  */
 static void
 build_hybrid_session(struct gy_session *s)
@@ -481,7 +484,7 @@ TEST(hybrid_session_blob_roundtrip)
  * gy_session_free is a whole-struct gy_secure_zero today, so the classical scan
  * already covers the PQ region structurally; this asserts erasure of the PQ
  * secrets non-vacuously (they are nonzero going in), guarding against a future
- * field-by-field free that forgets them (GER-M5-10 task 2).
+ * field-by-field free that forgets them.
  */
 TEST(hybrid_session_free_zeroizes)
 {
@@ -502,7 +505,7 @@ TEST(hybrid_session_free_zeroizes)
 /*
  * Hybrid DeviceRecord round-trip: init from a hybrid identity, add a session,
  * encode/decode exactly (base + PQ identity), and confirm the classical decoder
- * rejects the wider blob (format separation).  GER-M5-08b (b-ii-1).
+ * rejects the wider blob (format separation).
  */
 TEST(hybrid_device_record_roundtrip)
 {
@@ -536,30 +539,42 @@ TEST(hybrid_device_record_roundtrip)
 int
 main(void)
 {
+    /*
+     * The classical-D cases run under both classical suites; the
+     * hybrid_* cases key on DH (h25519_512) and are unaffected by the D suite,
+     * so they simply re-run identically under each iteration.
+     */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(sessionid_determinism),
+        GY_TEST(sessionid_cross_suite_rejected),
+        GY_TEST(session_blob_roundtrip),
+        GY_TEST(hybrid_session_blob_roundtrip),
+        GY_TEST(hybrid_device_record_roundtrip),
+        GY_TEST(session_blob_negatives),
+        GY_TEST(session_free_zeroizes),
+        GY_TEST(hybrid_session_free_zeroizes),
+        GY_TEST(session_insert_collision),
+        GY_TEST(inactive_eviction_order),
+        GY_TEST(activate_moves_to_active),
+        GY_TEST(device_blob_roundtrip),
+        GY_TEST(user_device_eviction),
+        GY_TEST(user_blob_roundtrip),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
     DH = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL || DH == NULL)
+    if (DH == NULL)
         return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(sessionid_determinism),
-            GY_TEST(sessionid_cross_suite_rejected),
-            GY_TEST(session_blob_roundtrip),
-            GY_TEST(hybrid_session_blob_roundtrip),
-            GY_TEST(hybrid_device_record_roundtrip),
-            GY_TEST(session_blob_negatives),
-            GY_TEST(session_free_zeroizes),
-            GY_TEST(hybrid_session_free_zeroizes),
-            GY_TEST(session_insert_collision),
-            GY_TEST(inactive_eviction_order),
-            GY_TEST(activate_moves_to_active),
-            GY_TEST(device_blob_roundtrip),
-            GY_TEST(user_device_eviction),
-            GY_TEST(user_blob_roundtrip),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

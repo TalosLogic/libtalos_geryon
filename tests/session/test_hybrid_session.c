@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Hybrid session create/send/recv end to end (GER-M5-08b b-ii-2): a two-party
+ * Hybrid session create/send/recv end to end: a two-party
  * hybrid handshake through the session layer, the KEM-confirmation PQ-pending
  * state machine surfacing in the persisted session (section 8.4), persistence
  * mid-confirmation, and PQ-key-change recovery.  Two independent in-memory

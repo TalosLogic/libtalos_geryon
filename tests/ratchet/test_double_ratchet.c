@@ -24,7 +24,7 @@ static const uint64_t TS = 0x0000000155667788ull;
  * responder's SPK public and key pair (Bob's initial ratchet material). */
 static void
 do_handshake(struct gy_dr_secrets *sa, struct gy_dr_secrets *sb, uint8_t *ad,
-             size_t *adlen, uint8_t bob_spk_pub[32],
+             size_t *adlen, uint8_t bob_spk_pub[GY_CURVE_PK_MAX],
              struct gy_keypair *bob_spk_kp)
 {
     struct gy_keypair alice_ik, bob_ik, ek, bob_opk[1];
@@ -59,7 +59,7 @@ do_handshake(struct gy_dr_secrets *sa, struct gy_dr_secrets *sb, uint8_t *ad,
     ASSERT_EQ(gy_x3dh_respond(D, sb, adb, &adbl, &ref, &local, prefix, prefl),
               GY_OK);
 
-    memcpy(bob_spk_pub, bundle.spk.pk, 32);
+    memcpy(bob_spk_pub, bundle.spk.pk, D->curve_pk_len);
     *bob_spk_kp = bob_spk.kp;
 }
 
@@ -68,7 +68,7 @@ TEST(init_mapping)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32], skdr[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX], skdr[32];
     size_t adl;
 
     do_handshake(&sa, &sb, ad, &adl, bob_spk_pub, &bob_spk_kp);
@@ -114,7 +114,7 @@ TEST(ping_pong)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     size_t adl;
 
     do_handshake(&sa, &sb, ad, &adl, bob_spk_pub, &bob_spk_kp);
@@ -139,7 +139,7 @@ TEST(tamper_rejected)
     struct gy_dr_secrets sa, sb;
     struct gy_dr_state alice, bob;
     struct gy_keypair bob_spk_kp;
-    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[32];
+    uint8_t ad[GY_X3DH_AD_MAX], bob_spk_pub[GY_CURVE_PK_MAX];
     uint8_t wire[256], out[256];
     size_t adl, wirelen, outlen;
 
@@ -259,13 +259,13 @@ TEST(determinism)
 {
     struct gy_dr_secrets s1, s2;
     struct gy_dr_state st1, st2;
-    uint8_t remote[32], ad[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    uint8_t w1[128], w2[128];
+    uint8_t remote[GY_CURVE_PK_MAX], ad[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    uint8_t w1[256], w2[256];
     size_t l1, l2, i;
 
     for (i = 0; i < 4; i++)
         ASSERT_EQ(gy_keypair_generate(D, &g_fixed[i]), GY_OK);
-    memcpy(remote, g_fixed[1].pub.pk, 32);
+    memcpy(remote, g_fixed[1].pub.pk, D->curve_pk_len);
 
     /* Fixed seed triple so the only randomness would be ratchet keys. */
     memset(&s1, 0, sizeof(s1));
@@ -305,19 +305,39 @@ TEST(determinism)
 int
 main(void)
 {
+    /*
+     * The classical vertical runs unchanged under both classical
+     * suites (the M1 genericity payoff).  Every descriptor-driven case runs
+     * under c25519 and c448; kdf_rk_hkdf_path is the lone exception - it pins
+     * the KDF_RK output against an explicit RFC 5869 SHA-256 / 32-byte-DH
+     * recompute, so it is a 25519-tier KAT and runs once (the c448 KDF_RK path,
+     * SHA-512 over a 56-byte DH, is covered by ping_pong / determinism through
+     * the descriptor).  kdf_ck_ctr_path recomputes via the descriptor-driven
+     * gy_kdf_ctr(D, ...), so it is generic and loops.
+     */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case generic[] = {
+        GY_TEST(init_mapping),     GY_TEST(ping_pong),
+        GY_TEST(tamper_rejected),  GY_TEST(kdf_ck_ctr_path),
+        GY_TEST(nonce_uniqueness), GY_TEST(determinism),
+    };
+    static const struct gy_test_case kat_25519[] = {
+        GY_TEST(kdf_rk_hkdf_path),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(init_mapping),    GY_TEST(ping_pong),
-            GY_TEST(tamper_rejected), GY_TEST(kdf_rk_hkdf_path),
-            GY_TEST(kdf_ck_ctr_path), GY_TEST(nonce_uniqueness),
-            GY_TEST(determinism),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(generic, sizeof(generic) / sizeof(generic[0]));
+        if (suites[s] == GY_SUITE_C25519)
+            rc |= gy_test_run(kat_25519,
+                              sizeof(kat_25519) / sizeof(kat_25519[0]));
     }
+    return rc;
 }

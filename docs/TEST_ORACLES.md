@@ -22,6 +22,24 @@ Regenerating any vector file requires updating the corresponding row here
   HYBRID_SPEC-derived known-answer vectors, cross-checks of each mixed-in
   primitive against its FIPS/RFC vectors, and the ProVerif models under
   `formal/`, not by any cross-implementation oracle.
+- **Standards vectors are not oracles.** The RFC 7748 (X25519/X448),
+  RFC 8032 (Ed25519/Ed448), RFC 5869 (HKDF), RFC 2104/4231 (HMAC), and
+  FIPS 203/204 ACVP known-answer vectors are fixed values published in a
+  standard, not output regenerated from a copyleft reference. They carry
+  no license entanglement and are NOT listed in the Oracles table below;
+  only cross-implementation generators (libsignal) are oracles under the
+  licensing boundary. The Oracles table is exhaustive for oracles, not
+  for test vectors.
+- **The classical 448 tier (`geryon_c448`) uses NO oracle.** libsignal
+  is 25519-only, so there is no external oracle for X448 or XEd448. The
+  tier is validated by RFC 7748 X448 and RFC 8032 Ed448 STANDARDS vectors
+  through the libdecaf validation gate (arithmetic trust,
+  `tests/core/test_gate_448*.c`), and by geryon-owned self-KATs and
+  property tests for the in-house XEd448 composition
+  (`tests/core_hooks/test_xed448.c`: regression-pinned KAT, the
+  sign-path-A = verify-path-A cross-check tying the §6 point layer to the
+  RFC-7748 ladder, round-trip, determinism-in-Z, and the tamper matrix).
+  No XEd448 oracle exists or is needed (D-XED-12/13 validation).
 - **The session layer (`session/` + `proto/`) uses NO oracle.** Sesame
   message-to-session association under header encryption and geryon's base-key
   dedupe are geryon's own realizations (D-SES-6), and no cross-implementation

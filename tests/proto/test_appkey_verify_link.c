@@ -24,6 +24,9 @@
 #include "facade.h"
 #include "gy_test.h"
 
+/* Link tests run under both classical suites. */
+static uint8_t g_suite;
+
 static void
 put_be32(uint8_t *p, uint32_t v)
 {
@@ -81,7 +84,7 @@ make_cert(const struct gy_suite_desc *desc, const struct gy_keypair *ik,
 
 TEST(verify_accepts_a_real_cert_and_signature_end_to_end)
 {
-    const struct gy_suite_desc *desc = gy_suite_lookup(GY_SUITE_C25519);
+    const struct gy_suite_desc *desc = gy_suite_lookup(g_suite);
     struct gy_keypair ik, sak;
     uint8_t cert[512];
     size_t cert_len;
@@ -147,12 +150,18 @@ TEST(verify_accepts_a_real_cert_and_signature_end_to_end)
 int
 main(void)
 {
-    ASSERT_EQ(gy_runtime_init(), GY_OK);
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(verify_accepts_a_real_cert_and_signature_end_to_end),
+    };
+    size_t s;
+    int rc = 0;
 
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(verify_accepts_a_real_cert_and_signature_end_to_end),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    ASSERT_EQ(gy_runtime_init(), GY_OK);
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

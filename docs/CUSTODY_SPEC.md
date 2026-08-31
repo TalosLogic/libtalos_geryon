@@ -320,7 +320,9 @@ key.
   authored that content, destroying deniability for it. The SAK is domain-separated
   from every protocol key, so messaging deniability (offline, all suites) is fully
   preserved; the SAK is an opt-in capability beside the protocol, not inside it.
-- **Scheme.** In a classical suite the SAK is XEdDSA. In a hybrid suite the SAK
+- **Scheme.** In a classical suite the SAK follows the suite's classical
+  signature scheme: XEdDSA at the 25519 tier, XEd448 at the 448 tier
+  (`geryon_c448`). In a hybrid suite the SAK
   is dual-scheme, exactly mirroring hybrid prekey signing (HYBRID_SPEC): the SAK
   keypair is an XEdDSA key AND an ML-DSA key, the identity certifies it under
   BOTH schemes, and per-request signatures carry both; verification requires
@@ -467,7 +469,8 @@ Custody spans two layers and adds one core primitive, respecting the one-layer-
 down rule:
 - **Layer 1 `core/`** gains the Argon2id wrapper (libsodium `crypto_pwhash`); the
   wrap ciphers (AEGIS-256, XChaCha20-Poly1305) are already present in `aead.c`,
-  and SAK signing reuses the suite's existing XEdDSA. The KEK-protector seam and
+  and SAK signing reuses the suite's existing signature scheme (XEdDSA at the
+  25519 tier, XEd448 at the 448 tier). The KEK-protector seam and
   the wrap/unwrap of blobs are core-level sealing over these primitives.
 - **Layer 5 `proto/` + the public API** own the `gy_custodian` object: it holds
   what `gy_ctx` held, drives create/open/lock/close/reset, and seals records at
@@ -493,7 +496,8 @@ primitives.
 - Argon2id parameters are stored per blob so they can be raised over time without
   a format change.
 - SAK signing is domain-separated (section 10) and uses the suite's constant-time
-  XEdDSA; the wrap ciphers inherit libsodium's constant-time guarantee (geryon's
+  classical signature scheme (XEdDSA or XEd448); the wrap ciphers inherit
+  libsodium's constant-time guarantee (geryon's
   CT authority); geryon's sealing/signing glue adds no secret-dependent
   branch, length, or index.
 

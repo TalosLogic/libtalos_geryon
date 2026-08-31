@@ -22,24 +22,35 @@
 
 #include "gy_test.h"
 
-#define VEC_PATH GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_he_self.vec"
+#define VEC_PATH_25519 GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_he_self.vec"
+#define VEC_PATH_448 GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_he_c448_self.vec"
 #define AEAD GY_AEAD_CHACHA20POLY1305
 #define NFRAMES 5
 
 static const struct gy_suite_desc *D;
 
-/* Fixed ratchet-keypair pool: sk is a constant scalar, pk = X25519(sk,base). */
+/* Fixed ratchet-keypair pool: sk is a constant scalar, pk = DH(sk, base). */
 static struct gy_keypair g_fixed[6];
 static size_t g_fixed_idx;
 static uint8_t g_salt_ctr;
 
+/* The suite's vector file (a distinct seeded conversation per classical tier). */
+static const char *
+vec_path(void)
+{
+    return (D->suite_id == GY_SUITE_C448) ? VEC_PATH_448 : VEC_PATH_25519;
+}
+
 static void
 build_kp(struct gy_keypair *kp, uint8_t seed)
 {
-    static const uint8_t base[32] = {9};
+    uint8_t base[GY_CURVE_PK_MAX];
 
+    /* Montgomery base point: u = 9 for X25519, u = 5 for X448 (RFC 7748). */
+    memset(base, 0, sizeof(base));
+    base[0] = (D->curve_type == GY_CURVE_TYPE_448) ? 5 : 9;
     memset(kp->sk, 0, sizeof(kp->sk));
-    memset(kp->sk, seed, 32);
+    memset(kp->sk, seed, D->curve_sk_len);
     kp->pub.curve_type = D->curve_type;
     kp->pub.pkid = 0;
     ASSERT_EQ(D->dh(kp->pub.pk, kp->sk, base), GY_OK);
@@ -144,9 +155,9 @@ TEST(dr_he_self_vectors)
 
     generate(frames, flen);
 
-    f = fopen(VEC_PATH, "r");
+    f = fopen(vec_path(), "r");
     if (f == NULL) {
-        fprintf(stderr, "  (no dr_he_self.vec; pin these records)\n");
+        fprintf(stderr, "  (no %s; pin these records)\n", vec_path());
         for (i = 0; i < NFRAMES; i++)
             dump_frame(i, frames[i], flen[i]);
         return;
@@ -173,16 +184,23 @@ TEST(dr_he_self_vectors)
 int
 main(void)
 {
+    /* A seeded HE self-vector conversation per classical tier
+     * (dr_he_self.vec for c25519, dr_he_c448_self.vec for c448). */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(dr_he_self_vectors),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(dr_he_self_vectors),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

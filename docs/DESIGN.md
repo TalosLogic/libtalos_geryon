@@ -33,7 +33,7 @@ path in code). Curve, signature scheme, hash, and KEM strength move together.
 | `geryon_c25519` | 0x01 | X25519 | XEdDSA | SHA-256 |
 | `geryon_h25519_512` | 0x02 | X25519 + ML-KEM-512 | XEdDSA + ML-DSA-44 | SHA-256 |
 | `geryon_c448` | 0x03 | X448 | XEd448 | SHA-512 |
-| (reserved) | 0x04 | | | |
+| `geryon_h448_1024` (reserved) | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
 
 The classical suite `geryon_c25519` provides no post-quantum confidentiality
 (the installed header says so plainly); it exists for size/bandwidth-constrained
@@ -44,8 +44,8 @@ deniable KEM-based initiator authentication (the `gy_pq_pending` state). A
 classical identity never completes a hybrid handshake or vice versa; the
 handshake, ratchet, and custody paths are suite-agnostic and dispatch on the
 suite byte the wire objects carry. Suite ID 0x04 (`geryon_h448_1024`) is
-reserved for a future 448-tier suite and is rejected before any cryptographic
-processing. HYBRID_SPEC.md governs all hybrid behavior.
+reserved for a future 448-tier hybrid suite and is rejected before any
+cryptographic processing. HYBRID_SPEC.md governs all hybrid behavior.
 
 ## Strict layering
 
@@ -174,7 +174,8 @@ must be permissively licensed so the combined work is redistributable under the
 AGPL; copyleft/source-available code (libsignal) is confined to test-vector
 oracle tooling that is never linked, copied, or translated. Runtime dependencies:
 libsodium (ISC), liboqs (MIT, the ML-KEM/ML-DSA provider for the hybrid suite),
-and monocypher (BSD-2/CC0) today; libdecaf (MIT) joins with the X448 suite.
+libdecaf (MIT, the X448 and 448 field/scalar/point provider for the `geryon_c448`
+suite), and monocypher (BSD-2/CC0).
 
 ## References
 

@@ -541,23 +541,29 @@ TEST(reinitiate_demotes)
 int
 main(void)
 {
+    /* The send-path vertical runs under both classical suites. */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(size_query),
+        GY_TEST(initiate_roundtrip),
+        GY_TEST(established_encrypt_roundtrip),
+        GY_TEST(commit_only_on_accept),
+        GY_TEST(prepare_markers_and_self_exclusion),
+        GY_TEST(fanout_same_did_different_user),
+        GY_TEST(stale_not_sent),
+        GY_TEST(reinitiate_demotes),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(size_query),
-            GY_TEST(initiate_roundtrip),
-            GY_TEST(established_encrypt_roundtrip),
-            GY_TEST(commit_only_on_accept),
-            GY_TEST(prepare_markers_and_self_exclusion),
-            GY_TEST(fanout_same_did_different_user),
-            GY_TEST(stale_not_sent),
-            GY_TEST(reinitiate_demotes),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

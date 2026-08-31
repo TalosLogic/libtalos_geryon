@@ -23,7 +23,7 @@ static const uint64_t TS = 0x0000000155667788ull;
 #define AEAD GY_AEAD_CHACHA20POLY1305
 
 /* Wire buffer sized for the classical HE frame: 80-byte overhead + payload. */
-#define WIRE 128
+#define WIRE 256 /* frame buffer, sized for the larger c448 header */
 
 struct pair {
     struct gy_dr_state alice;
@@ -202,7 +202,8 @@ TEST(forged_message_is_noop)
     struct gy_dr_state before;
     uint8_t w0[WIRE], forged[WIRE], out[WIRE];
     size_t l0, outlen, flen;
-    size_t ehl = 4 + 32 + 8 + 16; /* c25519 enc_header: 44-byte header + tag */
+    size_t ehl =
+        4 + D->curve_pk_len + 8 + 16; /* enc_header: header + AEAD tag */
 
     setup_pair(&p);
     enc(&p, &p.alice, w0, &l0, "a0");
@@ -431,25 +432,32 @@ TEST(teardown_zeroization)
 int
 main(void)
 {
+    /* The skipped-key / MAX_SKIP property suite runs under both
+     * classical suites (all state is descriptor-driven). */
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(out_of_order_same_chain),
+        GY_TEST(out_of_order_cross_epoch),
+        GY_TEST(max_skip_overflow_is_noop),
+        GY_TEST(forged_message_is_noop),
+        GY_TEST(capacity_eviction_oldest_first),
+        GY_TEST(aging_eviction),
+        GY_TEST(epoch_hk_distinct),
+        GY_TEST(receive_trial_counts),
+        GY_TEST(stored_epoch_trials_and_zeroization),
+        GY_TEST(teardown_zeroization),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_C25519);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(out_of_order_same_chain),
-            GY_TEST(out_of_order_cross_epoch),
-            GY_TEST(max_skip_overflow_is_noop),
-            GY_TEST(forged_message_is_noop),
-            GY_TEST(capacity_eviction_oldest_first),
-            GY_TEST(aging_eviction),
-            GY_TEST(epoch_hk_distinct),
-            GY_TEST(receive_trial_counts),
-            GY_TEST(stored_epoch_trials_and_zeroization),
-            GY_TEST(teardown_zeroization),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

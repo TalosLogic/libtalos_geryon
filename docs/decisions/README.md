@@ -52,8 +52,8 @@ message length; D-XED-8 XEd448 constants; D-XED-9 448-tier provider
 (libdecaf); D-XED-10 Montgomery key generation and clamping;
 D-XED-11 libsignal signature-encoding divergence (spec over reference);
 D-XED-12 libdecaf integration, Ed448 validation-gate scope, X448
-keygen; D-XED-13 XEd448 construction layer (RESERVED: registered by
-a design spike, blocking for the 448-tier implementation).
+keygen; D-XED-13 XEd448 construction layer (route ratified
+2026-08-20: birational-direct over libdecaf's internal gf field).
 
 **x3dh.md:** D-X3DH-1 EncodeEC; D-X3DH-2 info parameter;
 D-X3DH-3 replay mitigation (base-key dedupe); D-X3DH-4 signed prekey

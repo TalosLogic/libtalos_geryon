@@ -16,6 +16,9 @@
 
 #include "gy_test.h"
 
+/* The public-API E2E runs under both classical suites. */
+static uint8_t g_suite;
+
 /* ---- public-callback mock store (int kind, per geryon.h) ---------------- */
 
 #define MOCK_MAX 32
@@ -209,11 +212,11 @@ bring_up(gy_custodian **alice, gy_custodian **bob, uint8_t *bundle,
     mstore_bind(&g_am, &g_acb);
     mstore_bind(&g_bm, &g_bcb);
 
-    ASSERT_EQ(gy_custodian_create(alice, GY_SUITE_C25519, &g_acb, ACRED,
+    ASSERT_EQ(gy_custodian_create(alice, g_suite, &g_acb, ACRED,
                                   sizeof(ACRED) - 1, AUID, sizeof(AUID), ADID,
                                   sizeof(ADID), NULL, NULL, NULL),
               GY_OK);
-    ASSERT_EQ(gy_custodian_create(bob, GY_SUITE_C25519, &g_bcb, BCRED,
+    ASSERT_EQ(gy_custodian_create(bob, g_suite, &g_bcb, BCRED,
                                   sizeof(BCRED) - 1, BUID, sizeof(BUID), BDID,
                                   sizeof(BDID), NULL, NULL, NULL),
               GY_OK);
@@ -342,9 +345,9 @@ TEST(api_size_queries_and_errors)
                                   sizeof(ADID), NULL, NULL, NULL),
               GY_ERR_ARG);
 
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_C25519, &g_acb, ACRED,
-                                  sizeof(ACRED) - 1, AUID, sizeof(AUID), ADID,
-                                  sizeof(ADID), NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &g_acb, ACRED, sizeof(ACRED) - 1,
+                                  AUID, sizeof(AUID), ADID, sizeof(ADID), NULL,
+                                  NULL, NULL),
               GY_OK);
     /* Publishing/sending before identity generation is a state error. */
     ASSERT_EQ(gy_publish_bundle(c, NULL, &need), GY_ERR_STATE);
@@ -367,11 +370,19 @@ TEST(api_size_queries_and_errors)
 int
 main(void)
 {
+    static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
     static const struct gy_test_case cases[] = {
         GY_TEST(api_end_to_end),
         GY_TEST(api_rollback_and_purge),
         GY_TEST(api_size_queries_and_errors),
     };
+    size_t s;
+    int rc = 0;
 
-    return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        g_suite = suites[s];
+        printf("== suite 0x%02x ==\n", g_suite);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    }
+    return rc;
 }
