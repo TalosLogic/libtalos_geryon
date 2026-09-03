@@ -178,7 +178,8 @@ static struct gy_send_ctx g_ctx; /* large: gy_op arena inside */
 
 static const uint8_t BOB_UID[4] = {0xB0, 0xB0, 0xB0, 0xB0};
 static const uint8_t BOB_DID[4] = {0xD0, 0xD1, 0xD2, 0xD3};
-/* A distinct sender-self UserID that reuses Bob's DeviceID string (D-SES-12). */
+/* A distinct sender-self UserID that reuses Bob's DeviceID string (D-SES-12).
+ */
 static const uint8_t SELF_UID[4] = {0x5E, 0x1F, 0x00, 0x00};
 
 /* Build a fresh sender ctx (Alice) over the reset store; caller keeps ik. */
@@ -292,7 +293,8 @@ TEST(established_encrypt_roundtrip)
         gy_sim_bob_recv_initial(&sim, msg, mlen, back, sizeof(back), &blen),
         GY_OK);
 
-    /* A second message on the now-established session; Bob's ratchet reads it. */
+    /* A second message on the now-established session; Bob's ratchet reads it.
+     */
     ASSERT_EQ(gy_send_begin(&g_ctx), GY_OK);
     ASSERT_EQ(gy_send_encrypt(&g_ctx, BOB_UID, sizeof(BOB_UID), BOB_DID,
                               sizeof(BOB_DID), pt2, sizeof(pt2), msg2, &m2),
@@ -420,7 +422,8 @@ TEST(fanout_same_did_different_user)
                                sizeof(SELF_UID), BOB_DID, sizeof(BOB_DID)),
               GY_OK);
 
-    /* Seed the peer (BOB_UID, BOB_DID) and the sender's own (SELF_UID, BOB_DID). */
+    /* Seed the peer (BOB_UID, BOB_DID) and the sender's own (SELF_UID,
+     * BOB_DID). */
     ASSERT_EQ(gy_keypair_generate(D, &peer), GY_OK);
     peer_ik = peer.pub;
     ASSERT_EQ(gy_keypair_generate(D, &selfdev), GY_OK);

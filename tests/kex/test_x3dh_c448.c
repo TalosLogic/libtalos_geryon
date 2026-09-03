@@ -112,7 +112,8 @@ TEST(two_party_agreement)
 }
 
 /* Reconstruct SKdr from raw DH outputs, with or without the F prefix, over the
- * c448 SHA-512 tier (D-X3DH-7: zero salt sized hash_len = 64, F = 57 x 0xFF). */
+ * c448 SHA-512 tier (D-X3DH-7: zero salt sized hash_len = 64, F = 57 x 0xFF).
+ */
 static void
 ref_skdr(const uint8_t dh[][GY_DH_MAX], size_t ndh, int with_f,
          uint8_t out[GY_DR_SECRET_LEN])
@@ -332,7 +333,7 @@ TEST(cross_suite_rejected)
     ASSERT_EQ(gy_kex_ctr.dh, 0);
 
     memcpy(m, prefix, prefl);
-    m[1] = GY_SUITE_H448_1024; /* reserved, not enabled */
+    m[1] = GY_SUITE_H448_1024; /* enabled, but not this responder's suite */
     RESET_CTR();
     ASSERT_EQ(gy_x3dh_respond(D, &sb, ad, &adl, &ref, &l, m, prefl),
               GY_ERR_STATE);

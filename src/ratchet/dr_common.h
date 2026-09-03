@@ -17,7 +17,8 @@
  * root/chain/AEAD KDFs and the skipped-message-key store.  None of these carry
  * suite branching - the KDF_RK combiner (hdh for hybrid) lives in each engine's
  * ratchet step and is passed in as the IKM (gy_drc_kdf_rk).  Section references
- * are to HYBRID_SPEC / the Double Ratchet spec via docs/decisions/double_ratchet.md.
+ * are to HYBRID_SPEC / the Double Ratchet spec via
+ * docs/decisions/double_ratchet.md.
  */
 
 #define GY_DR_KEY_LEN 32
@@ -76,7 +77,8 @@ struct gy_skip_store {
  * KDF_RK (D-DR-1/14): HKDF(salt = rk, IKM = ikm, info = INFO("dr.root"),
  * L = 96) -> out_rk || out_ck || out_nhk.  out_rk may alias rk.  The IKM is
  * protocol-agnostic: classical suites pass the DH output (dh_len bytes), hybrid
- * suites pass hdh = HASH(kem_ss || dh) (hash_len bytes, HYBRID_SPEC section 7.3).
+ * suites pass hdh = HASH(kem_ss || dh) (hash_len bytes, HYBRID_SPEC
+ * section 7.3).
  */
 int gy_drc_kdf_rk(const struct gy_suite_desc *desc, const uint8_t *rk,
                   const uint8_t *ikm, size_t ikm_len, uint8_t out_rk[32],

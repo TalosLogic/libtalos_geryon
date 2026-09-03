@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Tests for src/core/ed25519.c (XEdDSA sign and calculate_key_pair).  Full
- * verification is covered separately; oracle KATs run against libsignal; here each
- * signature is self-checked against the equation sB = R + hA using libsodium
- * point operations directly.
+ * verification is covered separately; oracle KATs run against libsignal; here
+ * each signature is self-checked against the equation sB = R + hA using
+ * libsodium point operations directly.
  */
 
 #include <sodium.h>

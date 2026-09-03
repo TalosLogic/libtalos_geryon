@@ -12,8 +12,8 @@ points at the authoritative documents rather than restating them:
 ## What geryon is
 
 A clean-room C17 implementation of the Signal protocol (X3DH, Double Ratchet,
-Sesame, XEdDSA), in a classical suite and a post-quantum-hybrid suite. In the
-hybrid suite every classical asymmetric operation gets an ML-KEM/ML-DSA
+Sesame, XEdDSA), in classical suites and post-quantum-hybrid suites. In the
+hybrid suites every classical asymmetric operation gets an ML-KEM/ML-DSA
 counterpart, so session security holds if EITHER the ECDH or the KEM assumption
 survives, while offline deniability is preserved (no transcript signatures).
 The hybrid construction is geryon's own, not Signal's PQXDH, and is specified
@@ -33,7 +33,7 @@ path in code). Curve, signature scheme, hash, and KEM strength move together.
 | `geryon_c25519` | 0x01 | X25519 | XEdDSA | SHA-256 |
 | `geryon_h25519_512` | 0x02 | X25519 + ML-KEM-512 | XEdDSA + ML-DSA-44 | SHA-256 |
 | `geryon_c448` | 0x03 | X448 | XEd448 | SHA-512 |
-| `geryon_h448_1024` (reserved) | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
+| `geryon_h448_1024` | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
 
 The classical suite `geryon_c25519` provides no post-quantum confidentiality
 (the installed header says so plainly); it exists for size/bandwidth-constrained
@@ -43,9 +43,10 @@ into each X3DH DH and each Double Ratchet root-key step (PQ-first,
 deniable KEM-based initiator authentication (the `gy_pq_pending` state). A
 classical identity never completes a hybrid handshake or vice versa; the
 handshake, ratchet, and custody paths are suite-agnostic and dispatch on the
-suite byte the wire objects carry. Suite ID 0x04 (`geryon_h448_1024`) is
-reserved for a future 448-tier hybrid suite and is rejected before any
-cryptographic processing. HYBRID_SPEC.md governs all hybrid behavior.
+suite byte the wire objects carry. The `geryon_c448` and `geryon_h448_1024`
+suites mirror the 25519 pair at the 448 tier (ML-KEM-1024 + ML-DSA-87, SHA-512,
+CNSA 2.0-aligned). Suite byte 0x00 and any unassigned byte are rejected before
+any cryptographic processing. HYBRID_SPEC.md governs all hybrid behavior.
 
 ## Strict layering
 
@@ -55,8 +56,9 @@ proof that Layer 5 references no ratchet/core symbol, and a `geryon.h`
 standalone C++ compile). The allowlist is empty.
 
 - **Layer 1 `core/`** - primitives: thin wrappers over libsodium (X25519,
-  Ed25519, SHA-2, HKDF/HMAC, AEAD, RNG), liboqs (ML-KEM-512 and ML-DSA-44 for
-  the hybrid suite), and monocypher (the XEdDSA verify map), plus in-house
+  Ed25519, SHA-2, HKDF/HMAC, AEAD, RNG), liboqs (ML-KEM-512/1024 and
+  ML-DSA-44/87 for the hybrid suites), and monocypher (the XEdDSA verify map),
+  plus in-house
   crypto only where no acceptable library exists (the XEdDSA composition, and
   XEd448 over libdecaf for the 448 tier) held to the constant-time + clean-room
   bar.
@@ -138,11 +140,11 @@ decryption oracle is exposed. A peer identity-key change surfaces distinctly as
 ## Security invariants (summary)
 
 Load-bearing points: suite binding into the KDF; no transcript signatures ever
-(offline deniability, in the hybrid suite as much as the classical one - PQ
+(offline deniability, in the hybrid suites as much as the classical ones - PQ
 authentication is KEM-based, never a signature over the transcript); message
 keys deleted immediately after use and skipped-key storage bounded by MAX_SKIP;
 zeroization treated as part of the protocol, not cleanup; constant-time
-discipline unconditional, software fallbacks included. In the hybrid suite no
+discipline unconditional, software fallbacks included. In the hybrid suites no
 KEM secret is ever optional (handshake or ratchet) and hybrid signature
 verification requires both XEdDSA and ML-DSA to pass.
 
@@ -173,9 +175,9 @@ geryon's code is AGPL-3.0-only. Everything linked into the library or vendored
 must be permissively licensed so the combined work is redistributable under the
 AGPL; copyleft/source-available code (libsignal) is confined to test-vector
 oracle tooling that is never linked, copied, or translated. Runtime dependencies:
-libsodium (ISC), liboqs (MIT, the ML-KEM/ML-DSA provider for the hybrid suite),
-libdecaf (MIT, the X448 and 448 field/scalar/point provider for the `geryon_c448`
-suite), and monocypher (BSD-2/CC0).
+libsodium (ISC), liboqs (MIT, the ML-KEM/ML-DSA provider for the hybrid suites),
+libdecaf (MIT, the X448 and 448 field/scalar/point provider for the 448-tier
+suites), and monocypher (BSD-2/CC0).
 
 ## References
 
@@ -198,6 +200,6 @@ Standards for the primitives and their known-answer vectors:
 - NIST FIPS 203 - Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM).
 - NIST FIPS 204 - Module-Lattice-Based Digital Signature Standard (ML-DSA).
 
-The hybrid suite's own design and its rationale against Signal's PQ approach are
+geryon's hybrid design and its rationale against Signal's PQ approach are
 in [HYBRID_SPEC.md](HYBRID_SPEC.md) and [PQ_COMPARISON.md](PQ_COMPARISON.md);
 the ProVerif models are under [formal/](../formal/README.md).

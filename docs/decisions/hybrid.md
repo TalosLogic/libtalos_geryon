@@ -178,7 +178,7 @@ same ID; this file holds only the hybrid-suite additions.
 - **D-GEN-1 (hybrid suite bytes):** 0x02 = geryon_h25519_512 (KDF suite
   name h25519_512), 0x04 = geryon_h448_1024 (h448_1024); these match
   HYBRID_SPEC §2.1 and take the even suite ID bytes. The classical
-  register lists them as "reserved".
+  register (D-GEN-1) enumerates them in its suite-byte table.
 
 - **D-GEN-2 (hybrid PKID input):** the encoded public key hashed for a
   hybrid PKID is curve_type || curve_pk || mlkem_ek [|| mldsa_pk]; the
@@ -210,10 +210,11 @@ same ID; this file holds only the hybrid-suite additions.
     DSA ops (dsa_sign/verify), and hybrid component sizes; the KEM/DSA
     buffer maxima are per HYBRID_SPEC.
 
-- **D-GEN-9 (suite-milestone versions):** M5 v1.1.0,
-  M6 v1.2.0, M7 v1.3.0 (complete library, all
+- **D-GEN-9 (suite versions):** geryon_h25519_512 v1.1.0,
+  geryon_c448 v1.2.0, geryon_h448_1024 v1.3.0 (complete library, all
   four suites); each suite addition is an additive semver MINOR. The
   library version is independent of the HYBRID_SPEC document version
-  (v1.0 Accepted). The M3 API was already shaped around the hybrid
+  (v1.0 Accepted). The public-API design was already shaped around the hybrid
   requirements (PQ-pending placeholder, GY_*_MAX store maxima). The
-  first 2.0.0 candidate is M10 (D-GEN-1/7).
+  first 2.0.0 candidate is the first-flight deniable PQ-authentication
+  upgrade (D-GEN-1/7).

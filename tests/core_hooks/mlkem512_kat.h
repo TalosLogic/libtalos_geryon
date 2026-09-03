@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * ML-KEM-512 wrapper-conformance known-answer vectors (D-PQ-3). These pin
- * gy_mlkem_* to FIPS 203 independent of the backing library (liboqs), exactly
- * as the RFC 7748 vectors in test_x25519.c pin the libsodium-backed X25519
- * wrapper.
+ * gy_mlkem512_* to FIPS 203 independent of the backing library (liboqs),
+ * exactly as the RFC 7748 vectors in test_x25519.c pin the libsodium-backed
+ * X25519 wrapper.
  *
  * Source: NIST ACVP-Server FIPS 203 example vectors (public domain),
  * https://github.com/usnistgov/ACVP-Server - the ML-KEM-keyGen-FIPS203 and

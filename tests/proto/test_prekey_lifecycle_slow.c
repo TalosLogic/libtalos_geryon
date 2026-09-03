@@ -433,9 +433,10 @@ TEST(bundle_assemble_roundtrip_against_a_real_custodian)
               GY_OK);
     ASSERT_MEMEQ(out, pt, sizeof(pt));
 
-    /* The OPK the assembled bundle used is destroyed on receipt (delete-on-use),
-     * so it leaves the pool entirely; the granular publish_opk_batch path does
-     * not reserve, so the OTHER OPK is still unused and available. */
+    /* The OPK the assembled bundle used is destroyed on receipt
+     * (delete-on-use), so it leaves the pool entirely; the granular
+     * publish_opk_batch path does not reserve, so the OTHER OPK is still unused
+     * and available. */
     ASSERT_EQ(gy_custodian_opk_stats(b, &total, &used, &unused), GY_OK);
     ASSERT_EQ(total, 1);
     ASSERT_EQ(used, 0);

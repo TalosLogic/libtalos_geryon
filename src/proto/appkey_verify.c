@@ -21,14 +21,14 @@
 #include "facade.h"
 
 #define GY_APPKEY_INFO_MAX                                                     \
-    64 /* matches custodian.c's own copy: the
-                               * GY_INFO_MAX convention duplicated per file,
-                               * as x3dh.c/he.c/double_ratchet.c already do */
+    64 /* matches custodian.c's own copy: the                                  \
+        * GY_INFO_MAX convention duplicated per file,                          \
+        * as x3dh.c/he.c/double_ratchet.c already do */
 #define GY_APPKEY_SIGN_MAX                                                     \
-    8000 /* matches custodian.h's GY_CUSTODIAN_SIGN_MAX;
-                                 * this file cannot include custodian.h
-                                 * (custodian-less), so the bound is
-                                 * duplicated, not shared */
+    8000 /* matches custodian.h's GY_CUSTODIAN_SIGN_MAX;                       \
+          * this file cannot include custodian.h                               \
+          * (custodian-less), so the bound is                                  \
+          * duplicated, not shared */
 
 /* ---- local endian helpers (no core/ dependency, matching envelope.c) --- */
 

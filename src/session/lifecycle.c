@@ -233,7 +233,8 @@ out:
     return rc;
 }
 
-/* Full hybrid identity equality: curve + ML-KEM ek + ML-DSA pk (section 4.2). */
+/* Full hybrid identity equality: curve + ML-KEM ek + ML-DSA pk (section 4.2).
+ */
 static int
 hybrid_ik_equal(const struct gy_suite_desc *desc,
                 const struct gy_hybrid_device_record *dev,

@@ -87,11 +87,11 @@ x448_run(const void *state)
     g_gate_sink_u8 ^= out[0] ^ (uint8_t)e;
 }
 
-/* reps_per_trial = 1: the X448 scalar mult is tens of microseconds, thousands of
- * times the RDTSCP granularity, so one call per trial already dominates the timer
- * noise; repeating it only multiplies the wall-clock cost of a 1e6-sample run
- * (which is heavy on pre-BMI2/ADX hosts) for no statistical gain.  Matches the
- * gy_x448-wrapper target and target_hybrid_x3dh. */
+/* reps_per_trial = 1: the X448 scalar mult is tens of microseconds, thousands
+ * of times the RDTSCP granularity, so one call per trial already dominates the
+ * timer noise; repeating it only multiplies the wall-clock cost of a 1e6-sample
+ * run (which is heavy on pre-BMI2/ADX hosts) for no statistical gain.  Matches
+ * the gy_x448-wrapper target and target_hybrid_x3dh. */
 const struct gy_dudect_target target_x448 = {
     "x448", x448_setup, x448_run, sizeof(struct x448_state), 1,
 };

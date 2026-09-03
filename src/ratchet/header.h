@@ -99,9 +99,10 @@ int gy_dr_header_decode(const struct gy_suite_desc *desc,
 /*
  * Plaintext length of a hybrid header (HYBRID_SPEC section 7.6) with the given
  * optional fields present.  desc must be a hybrid suite.  The four combinations
- * (ek/confirm each 0 or 1) are the valid enc_header plaintext lengths a receiver
- * validates against BEFORE any key derivation (D-DR-16); adding the AEAD tag
- * gives the enc_header wire length.  Returns 0 if desc is NULL or not hybrid.
+ * (ek/confirm each 0 or 1) are the valid enc_header plaintext lengths a
+ * receiver validates against BEFORE any key derivation (D-DR-16); adding the
+ * AEAD tag gives the enc_header wire length.  Returns 0 if desc is NULL or not
+ * hybrid.
  */
 size_t gy_dr_hybrid_header_len(const struct gy_suite_desc *desc, int ek_present,
                                int confirm_present);

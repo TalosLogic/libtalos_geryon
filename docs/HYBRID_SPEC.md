@@ -1341,7 +1341,7 @@ classical suites and bare primitives only). Required:
 
 ## Open items
 
-- `[RESOLVED 2026-08-19]` M5 close-out additions, made while bringing
+- `[RESOLVED 2026-08-19]` first-hybrid-tier close-out additions, made while bringing
   the hybrid custody + directory surface to parity with classical during
   the hybrid worked example. All additive; none change
   the handshake, ratchet, or KDF behavior:
@@ -1388,5 +1388,5 @@ classical suites and bare primitives only). Required:
   hash_i prefix = 57-byte little-endian 2^456 - 1 - i. The 448-tier
   size tables in this document are confirmed correct. The 448-tier
   provider is also decided: libdecaf (ed448-goldilocks, MIT),
-  vendored and pinned per docs/decisions/xeddsa.md D-XED-9; the M6
+  vendored and pinned per docs/decisions/xeddsa.md D-XED-9; the c448
   milestone retains only its validation gate.

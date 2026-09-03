@@ -1,6 +1,6 @@
-# Formal Modeling Decisions (M4)
+# Formal Modeling Decisions (formal models + spec close-out)
 
-**Scope:** the ProVerif models in `formal/` (the M4 milestone;
+**Scope:** the ProVerif models in `formal/` (the formal-models milestone;
 ../HYBRID_SPEC.md Open items). These decisions fix what is modeled,
 the symbolic theories, the query set, and the toolchain, so the
 models never improvise. Register conventions and the full index live
@@ -13,7 +13,7 @@ agreement protocol for end-to-end secure messaging", USENIX Security
 Cited below as BJKS. Roles per HYBRID_SPEC §1.3: Bob publishes the
 prekey bundle, Alice sends the initial message.
 
-Out of scope for M4, restating HYBRID_SPEC Open items: deniability
+Out of scope for the formal-models milestone, restating HYBRID_SPEC Open items: deniability
 (paper argument, HYBRID_SPEC §8.5) and CryptoVerif computational
 proofs (possible later phase).
 
@@ -58,7 +58,7 @@ proofs (possible later phase).
 
 ### D-FM-2: attacker classes (broken-primitive events, single model)
 
-- **Spec gap:** the M4 scope defines the quantum attacker as "all ECDH
+- **Spec gap:** the formal-models scope defines the quantum attacker as "all ECDH
   secrets revealed" but leaves the model structure open.
 - **Decision:** one model per property family, with primitive
   breakage as attacker processes gated by events (BJKS pattern): a
@@ -79,7 +79,7 @@ proofs (possible later phase).
 
 ### D-FM-3: ratchet bound (3 epochs, two mechanisms)
 
-- **Spec gap:** the M4 scope says "2-3 epochs, one refresh boundary,
+- **Spec gap:** the formal-models scope says "2-3 epochs, one refresh boundary,
   confirmation chain"; the exact bound and its layout are open.
 - **Decision:** 3 epochs, where an epoch is one DH ratchet step (one
   KDF_RK application pair, HYBRID_SPEC §7.3). Layout:
@@ -123,7 +123,7 @@ proofs (possible later phase).
 
 ### D-FM-4: query set
 
-- **Spec gap:** the M4 scope names the query families; the precise
+- **Spec gap:** the formal-models scope names the query families; the precise
   properties, events, and expected outcomes are open.
 - **Decision:** events `InitiatorStarted`, `ResponderAccepted`,
   `ResponderConfirmed`, `InitiatorPQConfirmed`, each carrying the
@@ -161,7 +161,7 @@ proofs (possible later phase).
   The corresponding obligation is a review check, recorded here:
   nothing downstream may key off ciphertext bytes as an identifier
   (§6.8 base-key dedupe uses the base key, not ct - verify this
-  stays true through M3/M5 review).
+  stays true through the public-API and first-hybrid-tier review).
 - **Rationale:** items 1-4 are the milestone scope made precise;
   item 5 is the BJKS F4 lesson applied to geryon's own hybrid
   design, and the reason D-FM-1 chooses the non-binding theory.
@@ -172,10 +172,10 @@ proofs (possible later phase).
   symbolic and parameter-independent: suite ids, key sizes, and
   KEM/DSA parameter sets appear only as free constants, so the
   proofs cover geryon_h448_1024 exactly as they cover
-  geryon_h25519_512. M7 therefore requires NO model re-run or
+  geryon_h25519_512. The h448_1024 tier therefore requires NO model re-run or
   re-instantiation; the parameter-agreement queries (item 4)
   already prove suite binding for any suite constant. Recorded so
-  M7's plan can cite it instead of re-opening the question.
+  the h448_1024 plan can cite it instead of re-opening the question.
 - **Finding (2026-08-10, parameter agreement):** the
   `x3dh_secrecy.pv` agreement query (item 4) proved only after its
   defeating set was tightened to
@@ -264,7 +264,8 @@ proofs (possible later phase).
   (HE cannot weaken the ratchet) at a fraction of the model
   complexity; routing is Sesame plumbing with no secrecy content.
 - **Dependency:** the modeling work depends on the merged
-  §7.8 text (available from the start of M2, well before M4).
+  §7.8 text (available from the start of the header-encryption
+  milestone, well before the formal models).
 - **Validation (2026-08-10, ratchet.pv):** both HE queries prove.
   Header-key secrecy (query 4) and the no-feedback property (query 5)
   both rest on the lib's `nhk_split` being a one-way constructor DISJOINT
@@ -297,7 +298,7 @@ proofs (possible later phase).
   proved into cannot-be-proved); 2.04 is the version the adopted
   methodology was validated on. Master-gating keeps feature
   development unblocked while making unproved models unmergeable,
-  per the standing gate (M4 passes before any M5 hybrid
+  per the standing gate (the formal models pass before any hybrid-tier
   kex code merges).
 - **Validation:** the CI job itself; `formal/README.md` is the
   authoritative verdict/runtime table.

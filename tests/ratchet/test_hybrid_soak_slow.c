@@ -24,8 +24,10 @@ static const struct gy_suite_desc *D;
 #define AEAD GY_AEAD_CHACHA20POLY1305
 
 #define SOAK_N 10000
-#define WINDOW 64  /* per-burst reorder window; < GY_MAX_SKIP */
-#define FRAME 3072 /* holds an h25519_512 frame with ek + kem_ct + confirm_ct */
+#define WINDOW 64 /* per-burst reorder window; < GY_MAX_SKIP */
+/* Holds a worst-case hybrid frame (ek + kem_ct + confirm_ct) at either tier;
+ * the h448_1024 header alone is ~4.8 KB, so size off the wire maximum. */
+#define FRAME (GY_DR_HYBRID_HDR_WIRE_MAX + 64)
 
 static uint64_t xs;
 
@@ -148,7 +150,8 @@ TEST(hybrid_reorder_soak)
         heldhave[dir] = 1;
     }
 
-    /* Drain the two outstanding reserved frames (dir 0 -> Alice, dir 1 -> Bob). */
+    /* Drain the two outstanding reserved frames (dir 0 -> Alice, dir 1 -> Bob).
+     */
     if (heldhave[0])
         ASSERT_EQ(gy_hybrid_dr_decrypt(&alice.dr, out, sizeof(out), &ol,
                                        held[0], heldl[0], alice.ad, alice.adl),
@@ -165,16 +168,22 @@ TEST(hybrid_reorder_soak)
 int
 main(void)
 {
+    /* The whole file is descriptor-generic; run it for each hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(hybrid_reorder_soak),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(hybrid_reorder_soak),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

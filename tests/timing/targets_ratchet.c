@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Timing-validation targets for the ratchet layer.  gy_kdf_ctr is the SP 800-108
- * counter-mode KDF (D-DR-2) that drives KDF_CK and the per-message AEAD
+ * Timing-validation targets for the ratchet layer.  gy_kdf_ctr is the SP
+ * 800-108 counter-mode KDF (D-DR-2) that drives KDF_CK and the per-message AEAD
  * key/nonce derivation; its running time must not depend on the key (the
  * secret), only on the requested length.  Class A fixes the key, class B
  * randomizes it; a leak shows up as a large |t|.
@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "double_ratchet.h"
+#include "dr_common.h"
 #include "encode.h"
 #include "kdf.h"
 #include "prekeys.h"
@@ -178,7 +179,8 @@ dr_tag_setup(int cls, void *state)
     s->msglen = g_drf.baselen;
 
     /* Flip a class-dependent byte of the 16-byte AEAD tag: class A the first
-     * tag byte, class B the last.  Both forge; only the compare distinguishes. */
+     * tag byte, class B the last.  Both forge; only the compare distinguishes.
+     */
     tagpos = (cls == 0) ? s->msglen - 16 : s->msglen - 1;
     s->msg[tagpos] ^= 0x01;
 }
@@ -229,7 +231,8 @@ const struct gy_dudect_target target_dr_tag = {
 
 #define HX_TS 1723900000ULL
 #define HX_FLAGS ((uint64_t)1 | ((uint64_t)20 << 16) | ((uint64_t)1 << 32))
-#define HX_HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 1 */
+#define HX_HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 1   \
+                                                       */
 
 /*
  * One valid hybrid initial message plus Bob's responder material, built once.
@@ -248,49 +251,51 @@ static struct hx3dh_fixture {
     uint8_t prefix[GY_HYBRID_X3DH_PREFIX_MAX];
     size_t prefix_len;
     size_t ct_spk_off; /* byte offset of ct_spk within the prefix */
-} g_hxf;
+} g_hxf, g_hxf448;
 
+/* Build the responder fixture for one hybrid tier (the whole path is
+ * descriptor-generic; only the suite id differs, h25519_512 vs h448_1024). */
 static void
-ensure_hx3dh_fixture(void)
+build_hx3dh_fixture(struct hx3dh_fixture *f, uint8_t suite_id)
 {
-    const struct gy_suite_desc *d = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *d = gy_suite_desc(suite_id);
     struct gy_dr_secrets sa;
     struct gy_keypair ek;
     uint8_t ad[GY_HYBRID_AD_MAX];
     size_t adlen;
 
-    if (g_hxf.ready)
+    if (f->ready)
         return;
 
-    g_hxf.desc = d;
-    gy_hybrid_identity_keypair_generate(d, &g_hxf.bob_ik);
-    gy_hybrid_spk_create(d, &g_hxf.bob_spk, &g_hxf.bob_ik, HX_TS, HX_FLAGS);
-    gy_hybrid_opk_batch(d, &g_hxf.bob_opk, 1, NULL, 0);
-    gy_hybrid_identity_keypair_generate(d, &g_hxf.alice_ik);
+    f->desc = d;
+    gy_hybrid_identity_keypair_generate(d, &f->bob_ik);
+    gy_hybrid_spk_create(d, &f->bob_spk, &f->bob_ik, HX_TS, HX_FLAGS);
+    gy_hybrid_opk_batch(d, &f->bob_opk, 1, NULL, 0);
+    gy_hybrid_identity_keypair_generate(d, &f->alice_ik);
 
-    memset(&g_hxf.bundle, 0, sizeof(g_hxf.bundle));
-    g_hxf.bundle.ik = g_hxf.bob_ik.pub;
-    g_hxf.bundle.spk = g_hxf.bob_spk.kp.pub;
-    g_hxf.bundle.spk_timestamp = g_hxf.bob_spk.timestamp;
-    g_hxf.bundle.spk_flags = g_hxf.bob_spk.flags;
-    g_hxf.bundle.spk_ik_id = g_hxf.bob_spk.ik_id;
-    memcpy(g_hxf.bundle.spk_ed_sig, g_hxf.bob_spk.ed_sig,
-           sizeof(g_hxf.bundle.spk_ed_sig));
-    memcpy(g_hxf.bundle.spk_mldsa_sig, g_hxf.bob_spk.mldsa_sig,
-           sizeof(g_hxf.bundle.spk_mldsa_sig));
-    g_hxf.bundle.opk = g_hxf.bob_opk.pub;
+    memset(&f->bundle, 0, sizeof(f->bundle));
+    f->bundle.ik = f->bob_ik.pub;
+    f->bundle.spk = f->bob_spk.kp.pub;
+    f->bundle.spk_timestamp = f->bob_spk.timestamp;
+    f->bundle.spk_flags = f->bob_spk.flags;
+    f->bundle.spk_ik_id = f->bob_spk.ik_id;
+    memcpy(f->bundle.spk_ed_sig, f->bob_spk.ed_sig,
+           sizeof(f->bundle.spk_ed_sig));
+    memcpy(f->bundle.spk_mldsa_sig, f->bob_spk.mldsa_sig,
+           sizeof(f->bundle.spk_mldsa_sig));
+    f->bundle.opk = f->bob_opk.pub;
 
     gy_keypair_generate(d, &ek);
-    gy_hybrid_x3dh_initiate(d, &sa, ad, &adlen, g_hxf.prefix, &g_hxf.prefix_len,
-                            &g_hxf.alice_ik, &g_hxf.bundle, &ek, HX_HFLAG);
+    gy_hybrid_x3dh_initiate(d, &sa, ad, &adlen, f->prefix, &f->prefix_len,
+                            &f->alice_ik, &f->bundle, &ek, HX_HFLAG);
     gy_secure_zero(&ek, sizeof(ek));
     gy_secure_zero(&sa, sizeof(sa));
 
-    g_hxf.local.ik = &g_hxf.bob_ik;
-    g_hxf.local.spk = &g_hxf.bob_spk.kp;
-    g_hxf.local.spk_flags = HX_FLAGS;
-    g_hxf.local.opks = &g_hxf.bob_opk;
-    g_hxf.local.n_opks = 1;
+    f->local.ik = &f->bob_ik;
+    f->local.spk = &f->bob_spk.kp;
+    f->local.spk_flags = HX_FLAGS;
+    f->local.opks = &f->bob_opk;
+    f->local.n_opks = 1;
 
     /*
      * ct_spk offset within the prefix (section 6.5, matching the responder
@@ -298,32 +303,46 @@ ensure_hx3dh_fixture(void)
      * (4 + 1 + curve_pk + kem_pk + dsa_pk), the EK wire (4 + 1 + curve_pk),
      * then ct_ik (kem_ct) before ct_spk.
      */
-    g_hxf.ct_spk_off =
-        2 + (4 + 1 + d->curve_pk_len + d->kem_pk_len + d->dsa_pk_len) +
-        (4 + 1 + d->curve_pk_len) + d->kem_ct_len;
+    f->ct_spk_off = 2 +
+                    (4 + 1 + d->curve_pk_len + d->kem_pk_len + d->dsa_pk_len) +
+                    (4 + 1 + d->curve_pk_len) + d->kem_ct_len;
 
-    g_hxf.ready = 1;
+    f->ready = 1;
 }
 
 struct hx3dh_state {
+    const struct hx3dh_fixture *fx;
     uint8_t prefix[GY_HYBRID_X3DH_PREFIX_MAX];
     size_t prefix_len;
 };
 
+/* Shared per-trial setup over whichever tier's fixture the target selected. */
 static void
-hx3dh_setup(int cls, void *state)
+hx3dh_setup_from(struct hx3dh_state *s, const struct hx3dh_fixture *f, int cls)
 {
-    struct hx3dh_state *s = state;
-
-    ensure_hx3dh_fixture();
-    memcpy(s->prefix, g_hxf.prefix, g_hxf.prefix_len);
-    s->prefix_len = g_hxf.prefix_len;
+    s->fx = f;
+    memcpy(s->prefix, f->prefix, f->prefix_len);
+    s->prefix_len = f->prefix_len;
 
     /* Class B flips one byte of ct_spk; implicit rejection keeps the response
      * on the identical GY_OK path, so only the fusion/KDF over the (now
      * pseudorandom) shared secret can move the timing. */
     if (cls == 1)
-        s->prefix[g_hxf.ct_spk_off] ^= 0x01;
+        s->prefix[f->ct_spk_off] ^= 0x01;
+}
+
+static void
+hx3dh_setup(int cls, void *state)
+{
+    build_hx3dh_fixture(&g_hxf, GY_SUITE_H25519_512);
+    hx3dh_setup_from(state, &g_hxf, cls);
+}
+
+static void
+hx3dh448_setup(int cls, void *state)
+{
+    build_hx3dh_fixture(&g_hxf448, GY_SUITE_H448_1024);
+    hx3dh_setup_from(state, &g_hxf448, cls);
 }
 
 static void
@@ -338,12 +357,90 @@ hx3dh_run(const void *state)
     uint32_t flag_out;
     int rc;
 
-    rc =
-        gy_hybrid_x3dh_respond(g_hxf.desc, &sb, ad, &adlen, &opk_ref, &flag_out,
-                               &g_hxf.local, s->prefix, s->prefix_len);
+    rc = gy_hybrid_x3dh_respond(s->fx->desc, &sb, ad, &adlen, &opk_ref,
+                                &flag_out, &s->fx->local, s->prefix,
+                                s->prefix_len);
     g_sink_u8 ^= (uint8_t)rc ^ sbp[0];
 }
 
 const struct gy_dudect_target target_hybrid_x3dh = {
     "hybrid_x3dh_resp", hx3dh_setup, hx3dh_run, sizeof(struct hx3dh_state), 1,
+};
+
+const struct gy_dudect_target target_hybrid_x3dh_448 = {
+    "hybrid_x3dh_resp_448",
+    hx3dh448_setup,
+    hx3dh_run,
+    sizeof(struct hx3dh_state),
+    1,
+};
+
+/* ---- hybrid Double Ratchet KEM-mix root-KDF step (h448_1024) -----------
+ *
+ * Belt-and-suspenders coverage of geryon's DR root-key composition over secret
+ * material (D-PQ-4, 2026-08-26 amendment): each hybrid ratchet step mixes a
+ * fresh ML-KEM shared secret into the root-key KDF as hdh = HASH(kem_ss || dh)
+ * (the section 3.1 PQ-first combiner) followed by the root KDF
+ * gy_drc_kdf_rk(rk, hdh).  The X3DH responder target already covers the shared
+ * combiner and the ratchet path is not attacker-reachable (its kem_ct is
+ * AEAD-sealed), but this target additionally times the DR-SPECIFIC root KDF
+ * (gy_drc_kdf_rk, distinct from the X3DH derive-secrets path) over the secret.
+ *
+ * NO liboqs primitive is in the timed region.  kem_ss is supplied DIRECTLY: it
+ * is drawn from the RNG in setup (never from encaps/decaps), so kem_mix_run
+ * measures only geryon's own code - desc->hash (libsodium SHA) reproducing the
+ * DR static combiner byte-for-byte, and gy_drc_kdf_rk (libsodium HKDF).  The
+ * ML-KEM encapsulation/decapsulation that would PRODUCE kem_ss in production is
+ * a liboqs primitive and is deliberately excluded (it validates its own
+ * constant-timeness).  Class A fixes kem_ss, class B randomizes it, with dh and
+ * rk held constant, so any |t| means geryon's combine/root-KDF timing depends
+ * on the KEM secret value.  Both classes draw kem_ss from the RNG so the
+ * per-trial setup work is identical (D-GEN-10).
+ */
+static const uint8_t kem_mix_fixed_ss[GY_KEM_SS_MAX] = {
+    0x5a, 0xc4, 0x11, 0x8e, 0x72, 0x3d, 0xd0, 0x69, 0xbf, 0x04, 0x97,
+    0xe2, 0x38, 0x6b, 0xa1, 0x5f, 0xcc, 0x1a, 0x84, 0x70, 0xd5, 0x29,
+    0xb3, 0x4e, 0xf7, 0x60, 0x8d, 0x92, 0x0b, 0xa6, 0x33, 0xde,
+};
+static const uint8_t kem_mix_fixed_dh[GY_DH_MAX] = {0x11};
+static const uint8_t kem_mix_fixed_rk[32] = {0x22};
+
+struct kem_mix_state {
+    const struct gy_suite_desc *desc;
+    uint8_t kem_ss[GY_KEM_SS_MAX];
+};
+
+static void
+kem_mix_setup(int cls, void *state)
+{
+    struct kem_mix_state *s = state;
+
+    s->desc = gy_suite_desc(GY_SUITE_H448_1024);
+    gy_random_bytes(s->kem_ss, sizeof(s->kem_ss));
+    if (cls == 0)
+        memcpy(s->kem_ss, kem_mix_fixed_ss, sizeof(s->kem_ss));
+}
+
+static void
+kem_mix_run(const void *state)
+{
+    const struct kem_mix_state *s = state;
+    const struct gy_suite_desc *d = s->desc;
+    uint8_t buf[GY_KEM_SS_MAX + GY_DH_MAX];
+    uint8_t hdh[GY_HASH_MAX];
+    uint8_t out_rk[32], out_ck[32], out_nhk[32];
+
+    /* hdh = HASH(kem_ss || dh), byte-identical to the DR static combiner; no
+     * liboqs primitive runs here - kem_ss is the directly-supplied secret. */
+    memcpy(buf, s->kem_ss, d->kem_ss_len);
+    memcpy(buf + d->kem_ss_len, kem_mix_fixed_dh, d->dh_len);
+    (void)d->hash(hdh, buf, d->kem_ss_len + d->dh_len);
+    (void)gy_drc_kdf_rk(d, kem_mix_fixed_rk, hdh, d->hash_len, out_rk, out_ck,
+                        out_nhk);
+    g_sink_u8 ^= out_rk[0] ^ out_ck[0] ^ out_nhk[0];
+}
+
+const struct gy_dudect_target target_hybrid_kem_mix_448 = {
+    "hybrid_kem_mix_448",         kem_mix_setup, kem_mix_run,
+    sizeof(struct kem_mix_state), 200,
 };

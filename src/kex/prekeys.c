@@ -281,7 +281,8 @@ gy_kex_pkid_needs_regen(uint32_t pkid, const uint32_t *existing,
 /* ctx = INFO("prekey"), e.g. "geryon.1.h25519_512.prekey". */
 #define GY_PREKEY_CTX_MAX 64
 
-/* Encode a hybrid public key: curve_type || curve_pk || mlkem_ek (section 4.1). */
+/* Encode a hybrid public key: curve_type || curve_pk || mlkem_ek (section 4.1).
+ */
 int
 gy_hybrid_encode_pub(const struct gy_suite_desc *desc,
                      const struct gy_hybrid_public_key *pub, uint8_t *out,
@@ -361,7 +362,8 @@ hybrid_signed_data(const struct gy_suite_desc *desc,
 }
 
 #ifdef GY_TEST_HOOKS
-/* KAT-only exposures of the signed_data builders (prekeys.h; §11.2, D-GEN-6). */
+/* KAT-only exposures of the signed_data builders (prekeys.h; §11.2, D-GEN-6).
+ */
 int
 gy_kex_spk_signed_data(const struct gy_public_key *pub, uint64_t timestamp,
                        uint8_t *out, size_t cap, size_t *outlen)
@@ -564,7 +566,8 @@ gy_hybrid_spk_create(const struct gy_suite_desc *desc,
     if (rc != GY_OK)
         goto err;
 
-    /* PQ signature (ML-DSA) under the identity ML-DSA key, ctx = INFO("prekey"). */
+    /* PQ signature (ML-DSA) under the identity ML-DSA key, ctx =
+     * INFO("prekey"). */
     rc = prekey_ctx(desc, ctx, sizeof(ctx), &ctxlen);
     if (rc != GY_OK)
         goto err;

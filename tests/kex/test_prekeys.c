@@ -55,7 +55,8 @@ TEST(validate_ok)
     struct gy_prekey_bundle b;
     struct gy_keypair id;
 
-    /* Baseline: valid bundle with an OPK validates, verify runs exactly once. */
+    /* Baseline: valid bundle with an OPK validates, verify runs exactly once.
+     */
     build_bundle(&b, &id, 1);
     RESET_CTR();
     ASSERT_EQ(gy_bundle_validate(D, &b), GY_OK);

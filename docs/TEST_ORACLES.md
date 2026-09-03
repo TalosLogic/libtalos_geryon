@@ -17,10 +17,12 @@ Regenerating any vector file requires updating the corresponding row here
   for the primitives, including the FIPS 203/204 ACVP vectors for ML-KEM and
   ML-DSA).
 - **The hybrid protocol has NO external oracle.** The libsignal oracles are
-  valid for the classical suite and the shared primitives only; geryon's hybrid
-  suite is its own design (HYBRID_SPEC.md), so it is validated by
-  HYBRID_SPEC-derived known-answer vectors, cross-checks of each mixed-in
-  primitive against its FIPS/RFC vectors, and the ProVerif models under
+  X25519-only: valid for the classical `geryon_c25519` protocol and the shared
+  primitives only (`geryon_c448` has no libsignal oracle and rests on the RFC
+  8032/7748 primitive vectors plus the shared clean-room protocol logic).
+  geryon's hybrid suites are its own design (HYBRID_SPEC.md), so they are
+  validated by HYBRID_SPEC-derived known-answer vectors, cross-checks of each
+  mixed-in primitive against its FIPS/RFC vectors, and the ProVerif models under
   `formal/`, not by any cross-implementation oracle.
 - **Standards vectors are not oracles.** The RFC 7748 (X25519/X448),
   RFC 8032 (Ed25519/Ed448), RFC 5869 (HKDF), RFC 2104/4231 (HMAC), and

@@ -18,4 +18,4 @@
 # wire and independent of the crypto suite (the store does not know the suite),
 # so it is deliberately suite-INVARIANT SHA-512, not a descriptor hash
 # (GY_DEVKEY_LEN == 64 pins it).  Confirmed NOT a violation.
-src/session/session.c:561
+src/session/session.c:594

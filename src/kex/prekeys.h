@@ -20,7 +20,8 @@
  * signature cover is EncodeEC = curve_type || curve_pk (no pkid).
  */
 
-/* Default one-time-prekey batch cap (D-X3DH-5/10); configurable by the caller. */
+/* Default one-time-prekey batch cap (D-X3DH-5/10); configurable by the caller.
+ */
 #define GY_OPK_BATCH_MAX 100
 
 /*
@@ -129,9 +130,10 @@ int gy_kex_pkid_needs_regen(uint32_t pkid, const uint32_t *existing,
  * descriptors (geryon_h25519_512, geryon_h448_1024).  Each hybrid structure
  * embeds the classical struct as its first member (composition), so the curve
  * field layout and secret are reused; the hybrid PKID, encoding, and signatures
- * cover curve_type || curve_pk || mlkem_ek [|| mldsa_pk] and are computed by the
- * hybrid helpers, never the classical curve-only ones.  Component buffers are
- * sized to the GY_KEM_/GY_DSA_ maxima; each suite uses its descriptor lengths.
+ * cover curve_type || curve_pk || mlkem_ek [|| mldsa_pk] and are computed by
+ * the hybrid helpers, never the classical curve-only ones.  Component buffers
+ * are sized to the GY_KEM_/GY_DSA_ maxima; each suite uses its descriptor
+ * lengths.
  * ------------------------------------------------------------------------- */
 
 /* Dual-signature diagnostic codes (HYBRID_SPEC section 5.2). */
@@ -151,7 +153,8 @@ struct gy_hybrid_identity_public_key {
     uint8_t mldsa_pk[GY_DSA_PK_MAX];
 };
 
-/* Hybrid key pair (SPK/OPK/ratchet): public + curve_sk + mlkem_dk (section 4.3). */
+/* Hybrid key pair (SPK/OPK/ratchet): public + curve_sk + mlkem_dk
+ * (section 4.3). */
 struct gy_hybrid_keypair {
     struct gy_hybrid_public_key pub;
     uint8_t curve_sk[GY_CURVE_SK_MAX];
@@ -200,7 +203,8 @@ struct gy_hybrid_prekey_bundle {
 /*
  * Generate one hybrid key pair (curve + ML-KEM), computing its PKID over the
  * encoded public key and regenerating on the zero sentinel (D-GEN-2).  Secret
- * material is zeroized on any error path.  Returns GY_OK or a negative GY_ERR_*.
+ * material is zeroized on any error path.  Returns GY_OK or a negative
+ * GY_ERR_*.
  */
 int gy_hybrid_keypair_generate(const struct gy_suite_desc *desc,
                                struct gy_hybrid_keypair *out);
@@ -281,10 +285,10 @@ int gy_hybrid_ikhash(const struct gy_suite_desc *desc,
 #ifdef GY_TEST_HOOKS
 /*
  * KAT-only views of the two signed_data builders, exposing the exact bytes a
- * prekey signature covers so a self-KAT can pin the construction (D-GEN-6, §11.2)
- * without running any signature primitive.  Thin wrappers over the internal
- * static builders; production code never sees these and the byte layout under
- * test is identical to the signing path.  No randomness, no state.
+ * prekey signature covers so a self-KAT can pin the construction (D-GEN-6,
+ * §11.2) without running any signature primitive.  Thin wrappers over the
+ * internal static builders; production code never sees these and the byte
+ * layout under test is identical to the signing path.  No randomness, no state.
  *
  *   classical: EncodeEC(pub) || timestamp_be64                (D-X3DH-4)
  *   hybrid:    encoded_public_key || timestamp_be64 || flags_be64 (§5.2)

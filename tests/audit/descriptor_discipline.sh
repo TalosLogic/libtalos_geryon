@@ -8,7 +8,7 @@
 # the suite descriptor.  The scan covers {kex, ratchet, session, proto} (session
 # and proto gained PQ fields with the hybrid tier) and the
 # suite-specific PQ primitive-size macros are in the forbidden set.  This is the
-# mechanical half of the milestone exit criterion; reviewed exceptions (a
+# mechanical half of the suite-discipline exit criterion; reviewed exceptions (a
 # suite-INVARIANT primitive use, e.g. the fixed SHA-512 store-key derivation)
 # are recorded in the allowlist.
 #

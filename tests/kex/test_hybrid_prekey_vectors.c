@@ -4,8 +4,9 @@
  *
  * Spec-derived prekey self-KATs (D-GEN-6, HYBRID_SPEC §11.2): the pure byte
  * constructions a prekey bundle is built from, pinned against fixed input keys.
- * For every suite this pins EncodeEC / the hybrid public and identity encodings,
- * the PKID over that encoding, and the signed_data a prekey signature covers.
+ * For every suite this pins EncodeEC / the hybrid public and identity
+ * encodings, the PKID over that encoding, and the signed_data a prekey
+ * signature covers.
  *
  * The signature records follow the split agreed for §11.2: the XEdDSA signature
  * is geryon's own in-house layer, so it is byte-pinned via gy_xeddsa_sign_z
@@ -16,12 +17,12 @@
  * library behavior, not ours; that path is covered behaviorally by the dual-
  * signature matrix in test_hybrid_prekeys.
  *
- * The encoding/PKID/signed_data/ctx records are pure composition functions: bytes
- * in, bytes out, no primitive run.  The XEdDSA record runs geryon's own Ed25519-
- * based signer with a fixed Z.  So the vectors freeze geryon's own construction
- * only - a libsodium/liboqs version bump cannot move them - and there is no RNG
- * seam or function pointer anywhere in the path.  This is a SELF-KAT, not an
- * oracle: geryon's hybrid wire has no external generator.
+ * The encoding/PKID/signed_data/ctx records are pure composition functions:
+ * bytes in, bytes out, no primitive run.  The XEdDSA record runs geryon's own
+ * Ed25519- based signer with a fixed Z.  So the vectors freeze geryon's own
+ * construction only - a libsodium/liboqs version bump cannot move them - and
+ * there is no RNG seam or function pointer anywhere in the path.  This is a
+ * SELF-KAT, not an oracle: geryon's hybrid wire has no external generator.
  *
  * When tests/vectors/prekey_self.vec is absent the test prints the generated
  * records (paste them into the file, then record its sha256 in the vectors
@@ -113,7 +114,8 @@ gen_suite(uint8_t suite_id)
     size_t el, el2, sl;
     int n;
 
-    /* A suite absent from this build (e.g. the 448 tier before M6) is skipped;
+    /* A suite absent from this build (e.g. a tier not yet compiled in) is
+     * skipped;
      * when it lands it generates records the vec does not yet pin, which the
      * seen-vs-generated count below flags as needing pinning. */
     if (d == NULL)

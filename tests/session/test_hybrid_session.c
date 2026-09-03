@@ -9,6 +9,7 @@
  * stores stand in for the two devices.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "recv.h"
@@ -259,7 +260,8 @@ alice_initiate(uint8_t *msg, const char *pt)
     return wrap(msg, GY_MSG_INIT, inner, n);
 }
 
-/* Encrypt a DR message on `from` for (uid,did); return the enveloped message. */
+/* Encrypt a DR message on `from` for (uid,did); return the enveloped message.
+ */
 static size_t
 send_dr(struct gy_send_ctx *from, const uint8_t *uid, size_t ul,
         const uint8_t *did, size_t dl, uint8_t *msg, const char *pt)
@@ -299,14 +301,16 @@ TEST(handshake_and_confirmation)
 
     setup();
 
-    /* Alice -> Bob initial: Bob creates the session and owes his confirmation. */
+    /* Alice -> Bob initial: Bob creates the session and owes his confirmation.
+     */
     mlen = alice_initiate(msg, "a0");
     recv_expect(&b_recv, &bob_ik, &bob_spk, A_UID, sizeof(A_UID), A_DID,
                 sizeof(A_DID), msg, mlen, "a0");
     ASSERT_EQ(peer_pq(op, &b_store, A_UID, sizeof(A_UID), A_DID, sizeof(A_DID)),
               GY_HYBRID_PQ_CONFIRM_SENT);
 
-    /* Bob -> Alice reply carries the confirmation; Alice binds her PQ identity. */
+    /* Bob -> Alice reply carries the confirmation; Alice binds her PQ identity.
+     */
     mlen =
         send_dr(&b_send, A_UID, sizeof(A_UID), A_DID, sizeof(A_DID), msg, "b0");
     recv_expect(&a_recv, &alice_ik, &alice_spk, B_UID, sizeof(B_UID), B_DID,
@@ -326,16 +330,22 @@ TEST(handshake_and_confirmation)
 int
 main(void)
 {
+    /* The whole file is descriptor-generic; run it for each hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(handshake_and_confirmation),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    DH = gy_suite_desc(GY_SUITE_H25519_512);
-    if (DH == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(handshake_and_confirmation),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        DH = gy_suite_desc(suites[s]);
+        if (DH == NULL)
+            return 1;
+        printf("== suite %s ==\n", DH->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

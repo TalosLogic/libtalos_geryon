@@ -19,8 +19,8 @@
  * The table is `static const` rodata (suite.c): function pointers in read-only
  * memory are not a writable hijack surface, and dispatch keys on the public
  * suite ID, so there is no constant-time concern.  The suite set is CLOSED at
- * the four suites; geryon_c25519, geryon_h25519_512, and geryon_c448 are
- * enabled, geryon_h448_1024 is filled in as its primitives land.
+ * the four suites; geryon_c25519, geryon_h25519_512, geryon_c448, and
+ * geryon_h448_1024 are all enabled.
  */
 
 /*
@@ -62,10 +62,10 @@ struct gy_iov {
 };
 
 /*
- * One cipher suite.  The shape is complete up front: reserved (future-suite)
- * sizes are 0 and ops NULL in classical rows, so later suites fill rows in rather than
- * reshaping the struct.  AEAD is deliberately absent (D-DR-3 makes it a
- * per-session runtime selection dispatched in aead.c, not a suite property).
+ * One cipher suite.  The shape is complete up front: hybrid-only sizes are 0
+ * and ops NULL in classical rows, so a suite is a data row rather than a struct
+ * reshape.  AEAD is deliberately absent (D-DR-3 makes it a per-session runtime
+ * selection dispatched in aead.c, not a suite property).
  */
 struct gy_suite_desc {
     /* Identity. */
@@ -104,7 +104,7 @@ struct gy_suite_desc {
     int (*hkdf_expand)(uint8_t *out, size_t outlen, const uint8_t *prk,
                        const uint8_t *info, size_t infolen);
 
-    /* Reserved component sizes for future suites (0 in classical rows). */
+    /* Hybrid-only component sizes (0 in classical rows). */
     size_t kem_pk_len;
     size_t kem_sk_len;
     size_t kem_ct_len;
@@ -113,15 +113,16 @@ struct gy_suite_desc {
     size_t dsa_sk_len;
     size_t dsa_sig_len;
 
-    /* Reserved operations for future suites (NULL in classical rows). */
+    /* Hybrid-only operations (NULL in classical rows). */
     int (*kem_keypair)(uint8_t *pk, uint8_t *sk);
     int (*kem_encap)(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
     int (*kem_decap)(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
     int (*dsa_keypair)(uint8_t *pk, uint8_t *sk);
     /*
-     * ML-DSA sign/verify carry the FIPS 204 context string (D-PQ-1): kex/ passes
-     * ctx = INFO("prekey").  Sig-first, matching the classical sign/verify slots
-     * and gy_mldsa_sign/verify so the wrappers assign with no adapter.
+     * ML-DSA sign/verify carry the FIPS 204 context string (D-PQ-1): kex/
+     * passes ctx = INFO("prekey").  Sig-first, matching the classical
+     * sign/verify slots and the gy_mldsa44_/gy_mldsa87_ wrappers so they assign
+     * with no adapter.
      */
     int (*dsa_sign)(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
                     size_t msg_len, const uint8_t *ctx, size_t ctxlen);
@@ -131,10 +132,10 @@ struct gy_suite_desc {
 
 /*
  * Look up the descriptor for a suite identifier, or NULL if the byte is not an
- * enabled suite.  geryon_c25519 (0x01), geryon_h25519_512 (0x02), and
- * geryon_c448 (0x03) are enabled; every other byte, including the reserved 0x00
- * and the not-yet-enabled geryon_h448_1024 (0x04), returns NULL.  This is the
- * one suite-lookup function in the library (gy_suite folded in here).
+ * enabled suite.  geryon_c25519 (0x01), geryon_h25519_512 (0x02),
+ * geryon_c448 (0x03), and geryon_h448_1024 (0x04) are all enabled; every other
+ * byte, including the reserved 0x00, returns NULL.  This is the one
+ * suite-lookup function in the library (gy_suite folded in here).
  */
 const struct gy_suite_desc *gy_suite_desc(uint8_t suite_id);
 

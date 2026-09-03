@@ -39,9 +39,9 @@
 /*
  * Derive the XEd448 public key A (57-byte Edwards encoding with sign bit forced
  * to 0) and the matching signing scalar a (57-byte little-endian encoding; the
- * 56 scalar bytes followed by a zero byte) from a clamped Montgomery private key
- * mont_sk, per D-XED-13 R4.  scalar_a is SECRET; ed_pk is public.  Exposed for
- * tests (the sign-path-A vs verify-path-A cross-check) and internal use.
+ * 56 scalar bytes followed by a zero byte) from a clamped Montgomery private
+ * key mont_sk, per D-XED-13 R4.  scalar_a is SECRET; ed_pk is public.  Exposed
+ * for tests (the sign-path-A vs verify-path-A cross-check) and internal use.
  * Returns GY_OK or a negative GY_ERR_*; scalar_a is zeroized on failure.
  */
 int gy_xed448_calculate_key_pair(uint8_t ed_pk[57], uint8_t scalar_a[57],

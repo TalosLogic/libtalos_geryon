@@ -1,4 +1,4 @@
-# PQ Primitive Decisions (core/mlkem.c, core/mldsa.c; M5)
+# PQ Primitive Decisions (core/mlkem*.c, core/mldsa*.c)
 
 **Scope:** the liboqs-backed ML-KEM / ML-DSA wrappers and everything
 that validates them. Register conventions and the full index live in
@@ -41,7 +41,7 @@ across the bump.
   load-bearing. The ctx makes both properties checked at
   verification time, costs zero wire bytes, and touches no
   classical-suite code (ML-DSA exists only in hybrid suites, so no
-  M1 ripple). Message bytes stay identical across schemes, which is
+  c25519 ripple). Message bytes stay identical across schemes, which is
   what the 0x1/0x2/0x3 diagnostics rely on. Hedged signing: fresh
   randomness resists fault and side-channel attacks on a long-lived
   identity key, and is philosophically consistent with XEdDSA's
@@ -55,7 +55,8 @@ across the bump.
 ### D-PQ-2: liboqs build and integration
 
 - **Spec gap:** D-GEN-5 pins liboqs 0.16.0 as a submodule "NOT
-  built until M5" and defers every build decision to M5.
+  built until the first hybrid tier" and defers every build decision to
+  that tier.
 - **Decision:**
   - Cache args: `OQS_USE_OPENSSL=OFF`, `OQS_BUILD_ONLY_LIB=ON`,
     `OQS_MINIMAL_BUILD="KEM_ml_kem_512;KEM_ml_kem_1024;
@@ -89,7 +90,8 @@ across the bump.
 - **Validation:** full ACVP vector suites green on both dispatch
   configurations; the RNG shim's abort path covered by a death
   test; `gy_core_init` registration order covered by an init test
-  (ties into the M0-L4 finding: after M5, init-before-use is
+  (ties into the core-foundations L4 finding: after the first hybrid
+  tier, init-before-use is
   structurally enforced for the PQ layer).
 
 ### D-PQ-3: FIPS 203/204 KAT mechanics (ACVP through the wrappers)
@@ -100,9 +102,9 @@ across the bump.
   hedged sigGen takes rnd) while production entry points draw from
   the RNG.
 - **Decision:** per-primitive seams, all test-build-only:
-  - ML-KEM: `gy_mlkem_keypair_derand` / `gy_mlkem_encaps_derand`,
+  - ML-KEM: `gy_mlkem{512,1024}_keypair_derand` / `gy_mlkem{512,1024}_encaps_derand`,
     thin over the liboqs `_derand` entry points, compiled ONLY
-    under `GY_TEST_HOOKS` (the M0-L3 lesson: no test-only symbols
+    under `GY_TEST_HOOKS` (the core-foundations L3 lesson: no test-only symbols
     with unconditional external linkage). Decaps needs no seam
     (deterministic); ACVP decaps VAL cases, including implicit
     rejection, run the production path unchanged.
@@ -264,3 +266,23 @@ across the bump.
     documents the two protocol targets' class construction. The FIPS
     204 hedged-signing citation is no longer needed in the harness
     (no ML-DSA sign target remains).
+- **Amendment (2026-08-26, add a DR KEM-mix root-KDF target at the
+  complete-library close-out):** the 2026-08-19 amendment dropped a dedicated
+  DR KEM-mix target as redundant with the hybrid X3DH responder target (shared
+  combiner) and unreachable (the ratchet kem_ct is AEAD-sealed). Both remain
+  true, and the responder target is now instantiated at the 448 tier
+  (hybrid_x3dh_resp_448). For the complete-library close-out a dedicated DR
+  KEM-mix target
+  (hybrid_kem_mix_448) is nonetheless ADDED, as defensive belt-and-suspenders
+  coverage of the ONE piece of geryon code the responder target does not
+  exercise: the DR-specific root KDF gy_drc_kdf_rk (distinct from the X3DH
+  derive-secrets path), run over the secret ML-KEM shared secret at the largest
+  tier. It is not motivated by attacker reachability (there is none for the
+  ratchet mix); it is defensive coverage of geryon's own root-KDF composition.
+  - Constraint (maintainer, 2026-08-26): NO liboqs primitive may enter the
+    timed region. Held by construction - kem_ss is supplied DIRECTLY from the
+    RNG (never from encaps/decaps), so the timed run measures only geryon's
+    combiner (desc->hash, libsodium SHA, reproducing the DR static combiner
+    byte-for-byte) and gy_drc_kdf_rk (libsodium HKDF). The ML-KEM
+    encaps/decaps that would produce kem_ss in production stays outside the
+    measurement, exactly as the responder target keeps its decaps common-mode.

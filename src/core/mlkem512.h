@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-#ifndef GY_MLKEM_H
-#define GY_MLKEM_H
+#ifndef GY_MLKEM512_H
+#define GY_MLKEM512_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -18,10 +18,11 @@
  * have completed gy_core_init() (which registers the RNG liboqs draws through,
  * D-PQ-2).
  *
- * The h25519_512 suite uses ML-KEM-512; the 448 tier uses ML-KEM-1024 and gets
- * its own wrapper.  Sizes are exposed as macros for stack buffers here; the
- * kex/ratchet layers size against the suite-descriptor kem_* fields (D-GEN-7),
- * never these macros directly.
+ * Parameter sets are separate wrappers, one file each, exactly as x25519.c and
+ * x448.c are (D-PQ-3): the h25519_512 suite uses this ML-KEM-512 wrapper; the
+ * 448 tier uses ML-KEM-1024 in mlkem1024.c.  Sizes are exposed as macros for
+ * stack buffers here; the kex/ratchet layers size against the suite-descriptor
+ * kem_* fields (D-GEN-7), never these macros directly.
  */
 
 #define GY_MLKEM512_PK 800  /* encapsulation key (public) */
@@ -34,14 +35,14 @@
  * if the underlying provider fails.  Signature matches the suite descriptor's
  * kem_keypair slot.  Returns GY_OK or a negative GY_ERR_*.
  */
-int gy_mlkem_keypair(uint8_t *pk, uint8_t *sk);
+int gy_mlkem512_keypair(uint8_t *pk, uint8_t *sk);
 
 /*
  * Encapsulate to pk, writing the ciphertext ct and the shared secret ss.  ss is
  * zeroized on failure.  Matches the kem_encap slot.  Returns GY_OK or a
  * negative GY_ERR_*.
  */
-int gy_mlkem_encaps(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
+int gy_mlkem512_encaps(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
 
 /*
  * Decapsulate ct under sk, writing the shared secret ss.  Preserves FIPS 203
@@ -51,7 +52,7 @@ int gy_mlkem_encaps(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
  * decrypt-failure signal.  ss is zeroized on the error paths.  Matches the
  * kem_decap slot.  Returns GY_OK or a negative GY_ERR_*.
  */
-int gy_mlkem_decaps(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
+int gy_mlkem512_decaps(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
 
 #ifdef GY_TEST_HOOKS
 /*
@@ -65,9 +66,9 @@ int gy_mlkem_decaps(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
 #define GY_MLKEM512_KEYPAIR_SEED 64
 #define GY_MLKEM512_ENCAPS_SEED 32
 
-int gy_mlkem_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *seed);
-int gy_mlkem_encaps_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk,
-                           const uint8_t *seed);
+int gy_mlkem512_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *seed);
+int gy_mlkem512_encaps_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk,
+                              const uint8_t *seed);
 #endif /* GY_TEST_HOOKS */
 
-#endif /* GY_MLKEM_H */
+#endif /* GY_MLKEM512_H */

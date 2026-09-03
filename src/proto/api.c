@@ -20,6 +20,21 @@
 #include "envelope.h"
 
 /*
+ * The public store-buffer bounds (include/geryon.h) must never be smaller than
+ * the internal record model they promise fixed-buffer store implementers.
+ * These fail the build if the internal blobs ever outgrow the public bound, so
+ * the public constant is bumped deliberately rather than silently overflowed.
+ */
+_Static_assert(
+    GY_STORE_IDENTITY_BLOB_MAX_CLASSICAL >=
+        GY_CUST_HDR_MAX + GY_CUST_IDMAT_SEALED_MAX,
+    "classical identity store bound covers the sealed classical idmat");
+_Static_assert(GY_STORE_IDENTITY_BLOB_MAX_HYBRID >= GY_CUST_BLOB_MAX,
+               "hybrid identity store bound covers the sealed hybrid idmat");
+_Static_assert(GY_STORE_RECORD_BLOB_MAX >= GY_SESSION_BLOB_MAX,
+               "record store bound covers the largest session record");
+
+/*
  * The public fan-out types are laid out identically to the internal ones, so
  * gy_prepare bridges by pointer without copying an unbounded array.  These
  * assertions fail the build if the layouts ever drift apart.

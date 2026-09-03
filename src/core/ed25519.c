@@ -48,7 +48,8 @@ gy_xeddsa_calculate_key_pair(uint8_t ed_pk[32], uint8_t scalar_a[32],
     uint8_t sign_bit;
     int rc = GY_OK;
 
-    /* E = k * B in Edwards form; k is already clamped (D-XED-10), so noclamp. */
+    /* E = k * B in Edwards form; k is already clamped (D-XED-10), so noclamp.
+     */
     if (crypto_scalarmult_ed25519_base_noclamp(e, mont_sk) != 0) {
         rc = GY_ERR_CRYPTO;
         goto out;

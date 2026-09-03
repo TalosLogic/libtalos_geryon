@@ -40,26 +40,37 @@
  * (geryon_h25519_512): an ML-KEM-512 ek is 800 bytes, an ML-DSA-44 public key
  * 1312 and its signature 2420, so a hybrid registration/bundle/message runs to
  * several KB where the classical equivalents are a few hundred bytes.  The demo
- * uses fixed stack buffers for brevity; a real consumer sizes exactly by the
+ * uses fixed stack buffers sized from the library's public wire bounds
+ * (include/geryon.h) rather than hand-picked numbers, so a supported suite
+ * never overflows them; a consumer that prefers exact allocation uses the
  * OpenSSL-style query convention (call with a NULL buffer to learn the length,
- * then allocate), so it never hardcodes these and is unaffected by the suite.
+ * then allocate).  This one client serves every demo suite including
+ * h448_1024, so the ceilings use the _HYBRID bounds (which cover the classical
+ * suites too), and the OPK-batch ceiling is the per-OPK bound times the count
+ * this client actually mints.
  */
-#define CLIENT_REG_MAX 16384   /* serialized registration upper bound */
-#define CLIENT_BATCH_MAX 16384 /* serialized OPK batch upper bound */
-#define CLIENT_MSG_MAX 8192    /* enveloped message upper bound */
-#define CLIENT_BUNDLE_MAX 8192 /* serialized bundle upper bound */
-#define DEMO_FANOUT_MAX 4      /* fan-out descriptors (one peer device here) */
+#define CLIENT_MAX_PLAINTEXT 4096 /* demo application-payload ceiling */
+/* A published batch is the whole UNUSED pool, which peaks at the initial mint
+ * plus one replenishment; size to that count times the per-OPK wire bound. */
+#define CLIENT_MAX_OPKS (CLIENT_N_OPKS + CLIENT_REPLENISH)
+#define CLIENT_REG_MAX GY_REGISTRATION_MAX_HYBRID
+#define CLIENT_BATCH_MAX                                                       \
+    (GY_OPK_BATCH_HDR + CLIENT_MAX_OPKS * GY_OPK_WIRE_MAX_HYBRID)
+#define CLIENT_MSG_MAX (GY_MESSAGE_OVERHEAD_MAX_HYBRID + CLIENT_MAX_PLAINTEXT)
+#define CLIENT_BUNDLE_MAX GY_BUNDLE_MAX_HYBRID
+#define DEMO_FANOUT_MAX 4 /* fan-out descriptors (one peer device here) */
 /*
  * Continuous ratchet round-trips for the hybrid ML-KEM-refresh illustration.
  * The library refreshes the Double Ratchet ML-KEM keypair on a fixed interval
- * (HYBRID_SPEC section 6.6; 20 DH-ratchet steps in this build).  Each round-trip
- * here is two direction changes, hence two DH-ratchet steps, so 12 round-trips
- * (24 steps) crosses at least one PERIODIC refresh boundary beyond the refresh
- * the initial handshake already forces.  The refresh is internal (the consumer
- * just keeps sending), so this illustrates the path; it asserts only that every
- * message still round-trips across the boundary. */
+ * (HYBRID_SPEC section 6.6; 20 DH-ratchet steps in this build).  Each
+ * round-trip here is two direction changes, hence two DH-ratchet steps, so 12
+ * round-trips (24 steps) crosses at least one PERIODIC refresh boundary beyond
+ * the refresh the initial handshake already forces.  The refresh is internal
+ * (the consumer just keeps sending), so this illustrates the path; it asserts
+ * only that every message still round-trips across the boundary. */
 #define DEMO_KEM_REFRESH_ROUNDS 12
-#define CLIENT_INITIATE_RETRY 2 /* bounded send-retry over the initiate path */
+#define CLIENT_INITIATE_RETRY 2 /* bounded send-retry over the initiate path   \
+                                 */
 #define CLIENT_POLL_MS 50       /* per-attempt poll timeout (archive pattern) */
 #define CLIENT_POLL_ATTEMPTS                                                   \
     200 /* bounded attempts: ~10s, then fail (no hang) */
@@ -460,11 +471,20 @@ run_initiator(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
  * receives the initiator's first message AFTER that confirmation, at which
  * point it reads PQ-CONFIRMED (deniable KEM confirmation, no transcript
  * signature).  The classical suites carry no such state and always report
- * GY_PQ_NOT_APPLICABLE, so the expected value is suite-gated; the same call runs
- * in the classical demo and asserts the NOT_APPLICABLE contract.  A consumer
- * that does not surface PQ-auth state never has to make this call.  Returns 0 on
- * the expected state, -1 on any error or an unexpected state.
+ * GY_PQ_NOT_APPLICABLE, so the expected value is suite-gated; the same call
+ * runs in the classical demo and asserts the NOT_APPLICABLE contract.  A
+ * consumer that does not surface PQ-auth state never has to make this call.
+ * Returns 0 on the expected state, -1 on any error or an unexpected state.
  */
+/* The two hybrid suites carry PQ-auth state and the ML-KEM ratchet refresh;
+ * the two classical suites do not.  Keeps the suite-gated demo branches from
+ * hardcoding a single hybrid suite id. */
+static int
+suite_is_hybrid(uint8_t suite)
+{
+    return suite == GY_SUITE_H25519_512 || suite == GY_SUITE_H448_1024;
+}
+
 static int
 observe_pq_state(gy_custodian *c, const struct client_cfg *cfg, int want)
 {
@@ -477,7 +497,7 @@ observe_pq_state(gy_custodian *c, const struct client_cfg *cfg, int want)
         fprintf(stderr, "[%s] gy_pq_pending failed (%d)\n", cfg->name, st);
         return -1;
     }
-    if (cfg->suite != GY_SUITE_H25519_512) {
+    if (!suite_is_hybrid(cfg->suite)) {
         if (st != GY_PQ_NOT_APPLICABLE) {
             fprintf(stderr, "[%s] classical suite reported PQ state %d\n",
                     cfg->name, st);
@@ -744,7 +764,8 @@ static int
 run_sak_auth(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
 {
     gy_key_handle sak;
-    uint8_t cert[8192], sig[4096], msg[128];
+    uint8_t cert[GY_APPKEY_CERT_MAX_HYBRID], sig[GY_APPKEY_SIG_MAX_HYBRID];
+    uint8_t msg[128];
     size_t certlen = sizeof(cert), siglen = sizeof(sig), msglen;
     int verdict;
 
@@ -795,7 +816,7 @@ run_sak_auth(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
      * usable for signing and cert export until history evicts it. */
     {
         gy_key_handle sak2;
-        uint8_t cert2[8192];
+        uint8_t cert2[GY_APPKEY_CERT_MAX_HYBRID];
         size_t clen;
 
         if (gy_custodian_rotate_appkey(c, 0, &sak2) != GY_OK) {
@@ -817,7 +838,8 @@ run_sak_auth(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
                        DEMO_MSG_PUBLISH_PRIOR_CERT, 0, cert, certlen) != 0)
             return -1;
 
-        /* A request signed by the NEW SAK verifies (against the active cert). */
+        /* A request signed by the NEW SAK verifies (against the active cert).
+         */
         siglen = sizeof(sig);
         if (gy_custodian_sign(c, sak2, (const uint8_t *)DEMO_AUTH_CTX,
                               strlen(DEMO_AUTH_CTX), msg, msglen, sig,
@@ -1342,13 +1364,13 @@ run_peer_removal(gy_custodian *c, const struct client_cfg *cfg, int rfd,
  * a CREATE-TIME custodian policy (the section 4.2 inequality is validated in
  * gy_custodian_create), so it cannot be toggled on the main alice/bob
  * custodians, which are created with expiration OFF.  This runs an isolated,
- * in-process pair of throwaway custodians created WITH a tiny expiration policy:
- * after max_send messages on a session, gy_prepare reports GY_FANOUT_STALE and
- * gy_encrypt returns GY_ERR_EXPIRED (a stale session is never sent under,
- * D-SES-7).  The sender hands each ciphertext straight to the peer in-process,
- * so there is NO coordinator traffic and the scenario is fully deterministic
- * and cannot perturb the main conversation.  Returns 0 on success, -1 on any
- * failure.
+ * in-process pair of throwaway custodians created WITH a tiny expiration
+ * policy: after max_send messages on a session, gy_prepare reports
+ * GY_FANOUT_STALE and gy_encrypt returns GY_ERR_EXPIRED (a stale session is
+ * never sent under, D-SES-7).  The sender hands each ciphertext straight to the
+ * peer in-process, so there is NO coordinator traffic and the scenario is fully
+ * deterministic and cannot perturb the main conversation.  Returns 0 on
+ * success, -1 on any failure.
  */
 static int
 run_expiration(const struct client_cfg *cfg)
@@ -1518,13 +1540,13 @@ out:
 }
 
 /*
- * Demo (hybrid suites only): a Double Ratchet run that crosses an ML-KEM refresh
- * boundary.  A hybrid session mixes a fresh ML-KEM secret into the root KDF on
- * each ratchet step and refreshes its ML-KEM keypair on a fixed interval
+ * Demo (hybrid suites only): a Double Ratchet run that crosses an ML-KEM
+ * refresh boundary.  A hybrid session mixes a fresh ML-KEM secret into the root
+ * KDF on each ratchet step and refreshes its ML-KEM keypair on a fixed interval
  * (HYBRID_SPEC section 6.6).  This runs a long continuous ping-pong over ONE
  * session so the periodic refresh fires mid-conversation; from the consumer's
- * side nothing changes (it just keeps sending), and every message still decrypts
- * across the boundary.  Isolated in-process throwaway custodians (like
+ * side nothing changes (it just keeps sending), and every message still
+ * decrypts across the boundary.  Isolated in-process throwaway custodians (like
  * run_expiration), so there is no coordinator traffic and it cannot perturb the
  * main conversation.  Returns 0 on success, -1 on any failure.
  */
@@ -1719,11 +1741,10 @@ client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
     if (rc == 0 && cfg->role == CLIENT_INITIATOR)
         rc = run_expiration(cfg);
 
-    /* Demo (hybrid suites only): a Double Ratchet run crossing an ML-KEM refresh
-     * boundary.  Isolated and in-process like the expiration phase, and skipped
-     * for classical suites, which carry no ML-KEM refresh. */
-    if (rc == 0 && cfg->role == CLIENT_INITIATOR &&
-        cfg->suite == GY_SUITE_H25519_512)
+    /* Demo (hybrid suites only): a Double Ratchet run crossing an ML-KEM
+     * refresh boundary.  Isolated and in-process like the expiration phase, and
+     * skipped for classical suites, which carry no ML-KEM refresh. */
+    if (rc == 0 && cfg->role == CLIENT_INITIATOR && suite_is_hybrid(cfg->suite))
         rc = run_kem_refresh(cfg);
 
     /* the example: restart persistence.  The responder hands off to a fresh

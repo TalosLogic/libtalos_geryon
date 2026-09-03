@@ -164,7 +164,8 @@ TEST(seam_tampered_bundle_parses_but_fails_validation)
 
     /* proto/ parse is structural: it succeeds on the tampered bytes ... */
     ASSERT_EQ(gy_bundle_parse(&b2, D, buf, wlen), GY_OK);
-    /* ... but the kex/ cryptographic check rejects it (proto does no crypto). */
+    /* ... but the kex/ cryptographic check rejects it (proto does no crypto).
+     */
     ASSERT_EQ(gy_bundle_validate(D, &b2), GY_ERR_VERIFY);
 
     gy_sim_free(&sim);
@@ -187,7 +188,8 @@ int
 main(void)
 {
     /* Envelope + bundle wire formats at both classical tiers (bundle
-     * sizes are descriptor-driven via gy_bundle_wire_len, so 448 is covered). */
+     * sizes are descriptor-driven via gy_bundle_wire_len, so 448 is covered).
+     */
     static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
     static const struct gy_test_case cases[] = {
         GY_TEST(envelope_roundtrip),

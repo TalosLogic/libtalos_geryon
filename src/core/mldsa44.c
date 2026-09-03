@@ -6,7 +6,7 @@
 #include <oqs/oqs.h>
 
 #include "error.h"
-#include "mldsa.h"
+#include "mldsa44.h"
 #include "util.h"
 
 /*
@@ -22,7 +22,7 @@
  */
 
 int
-gy_mldsa_keypair(uint8_t *pk, uint8_t *sk)
+gy_mldsa44_keypair(uint8_t *pk, uint8_t *sk)
 {
     if (pk == NULL || sk == NULL)
         return GY_ERR_ARG;
@@ -35,8 +35,8 @@ gy_mldsa_keypair(uint8_t *pk, uint8_t *sk)
 }
 
 int
-gy_mldsa_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg, size_t mlen,
-              const uint8_t *ctx, size_t ctxlen)
+gy_mldsa44_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
+                size_t mlen, const uint8_t *ctx, size_t ctxlen)
 {
     size_t siglen = 0;
 
@@ -63,8 +63,8 @@ gy_mldsa_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg, size_t mlen,
 }
 
 int
-gy_mldsa_verify(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg,
-                size_t mlen, const uint8_t *ctx, size_t ctxlen)
+gy_mldsa44_verify(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg,
+                  size_t mlen, const uint8_t *ctx, size_t ctxlen)
 {
     if (pk == NULL || sig == NULL)
         return GY_ERR_ARG;

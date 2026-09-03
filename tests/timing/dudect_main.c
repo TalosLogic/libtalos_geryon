@@ -46,16 +46,30 @@ extern const struct gy_dudect_target target_dr_tag;
 extern const struct gy_dudect_target target_he_tag;
 extern const struct gy_dudect_target target_he_recv;
 extern const struct gy_dudect_target target_hybrid_x3dh;
+extern const struct gy_dudect_target target_hybrid_x3dh_448;
+extern const struct gy_dudect_target target_hybrid_kem_mix_448;
 extern const struct gy_dudect_target target_x448;
 extern const struct gy_dudect_target target_x448_wrap;
 extern const struct gy_dudect_target target_xed448_sign;
 
 static const struct gy_dudect_target *const target_registry[] = {
-    &target_sentinel_leak, &target_sentinel_clean, &target_const_memcmp,
-    &target_x25519,        &target_xeddsa_sign,    &target_aead_tag,
-    &target_kdf_ctr,       &target_dr_tag,         &target_he_tag,
-    &target_he_recv,       &target_hybrid_x3dh,    &target_x448,
-    &target_x448_wrap,     &target_xed448_sign,    NULL,
+    &target_sentinel_leak,
+    &target_sentinel_clean,
+    &target_const_memcmp,
+    &target_x25519,
+    &target_xeddsa_sign,
+    &target_aead_tag,
+    &target_kdf_ctr,
+    &target_dr_tag,
+    &target_he_tag,
+    &target_he_recv,
+    &target_hybrid_x3dh,
+    &target_hybrid_x3dh_448,
+    &target_hybrid_kem_mix_448,
+    &target_x448,
+    &target_x448_wrap,
+    &target_xed448_sign,
+    NULL,
 };
 
 static volatile sig_atomic_t g_stop = 0;

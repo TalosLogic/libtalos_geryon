@@ -83,16 +83,41 @@ TEST(c25519_self_consistency)
     ASSERT_TRUE(d->dsa_verify == NULL, "dsa_verify NULL");
 }
 
+TEST(h448_1024_exact_maxima)
+{
+    const struct gy_suite_desc *d = gy_suite_desc(GY_SUITE_H448_1024);
+
+    ASSERT_TRUE(d != NULL && d->is_hybrid, "h448_1024 present and hybrid");
+
+    /* The highest tier drives the hybrid KEM and DSA maxima to their exact
+     * values: this proves the GY_KEM and GY_DSA maxima are tight, not merely
+     * sufficient.  The curve, sig, hash, and F maxima are hit exactly by
+     * c448. */
+    ASSERT_EQ(d->kem_pk_len, GY_KEM_EK_MAX);
+    ASSERT_EQ(d->kem_sk_len, GY_KEM_DK_MAX);
+    ASSERT_EQ(d->kem_ct_len, GY_KEM_CT_MAX);
+    ASSERT_EQ(d->kem_ss_len, GY_KEM_SS_MAX);
+    ASSERT_EQ(d->dsa_pk_len, GY_DSA_PK_MAX);
+    ASSERT_EQ(d->dsa_sk_len, GY_DSA_SK_MAX);
+    ASSERT_EQ(d->dsa_sig_len, GY_DSA_SIG_MAX);
+
+    /* FIPS 203/204 ML-KEM-1024 / ML-DSA-87 constants, restated as a KAT. */
+    ASSERT_EQ(d->kem_pk_len, (size_t)1568);
+    ASSERT_EQ(d->kem_ct_len, (size_t)1568);
+    ASSERT_EQ(d->dsa_pk_len, (size_t)2592);
+    ASSERT_EQ(d->dsa_sig_len, (size_t)4627);
+}
+
 TEST(enabled_suites)
 {
     unsigned i;
 
-    /* c25519 (0x01), h25519_512 (0x02), and c448 (0x03) resolve; every other
-     * byte (including the reserved h448_1024, 0x04) is NULL. */
+    /* All four suites resolve: c25519 (0x01), h25519_512 (0x02), c448 (0x03),
+     * h448_1024 (0x04); every other byte is NULL. */
     for (i = 0; i <= 0xff; i++) {
         const struct gy_suite_desc *d = gy_suite_desc((uint8_t)i);
         if (i == GY_SUITE_C25519 || i == GY_SUITE_H25519_512 ||
-            i == GY_SUITE_C448)
+            i == GY_SUITE_C448 || i == GY_SUITE_H448_1024)
             ASSERT_TRUE(d != NULL, "enabled suite resolves");
         else
             ASSERT_TRUE(d == NULL, "other suite NULL");
@@ -229,6 +254,7 @@ TEST(hkdf_extract_iov_matches_flat)
     }
 }
 
-GY_TEST_MAIN(GY_TEST(c25519_self_consistency), GY_TEST(enabled_suites),
-             GY_TEST(suite_f_prefix), GY_TEST(hmac_iov_matches_flat),
+GY_TEST_MAIN(GY_TEST(c25519_self_consistency), GY_TEST(h448_1024_exact_maxima),
+             GY_TEST(enabled_suites), GY_TEST(suite_f_prefix),
+             GY_TEST(hmac_iov_matches_flat),
              GY_TEST(hkdf_extract_iov_matches_flat))

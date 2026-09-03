@@ -194,7 +194,8 @@ TEST(kdf_ck_ctr_path)
 
     ASSERT_EQ(gy_dr_kdf_ck(D, ck, mk, ckn), GY_OK);
 
-    /* Independent recompute through the SP 800-108 KDF-CTR (dr.msg/dr.chain). */
+    /* Independent recompute through the SP 800-108 KDF-CTR (dr.msg/dr.chain).
+     */
     ASSERT_EQ(gy_info(info, sizeof(info), &infolen, D->suite_id, "dr.msg"),
               GY_OK);
     ASSERT_EQ(gy_kdf_ctr(D, want, 32, ck, 32, info, infolen, NULL, 0), GY_OK);

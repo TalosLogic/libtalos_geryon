@@ -23,7 +23,8 @@ gy_x448_keypair(uint8_t pk[56], uint8_t sk[56])
     sk[0] &= 252;
     sk[55] |= 128;
 
-    /* libdecaf's RFC 7748 base-point scalarmul; cannot fail on a 56-byte key. */
+    /* libdecaf's RFC 7748 base-point scalarmul; cannot fail on a 56-byte key.
+     */
     decaf_x448_derive_public_key(pk, sk);
     return GY_OK;
 }

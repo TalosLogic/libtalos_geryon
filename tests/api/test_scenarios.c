@@ -395,7 +395,8 @@ TEST(fault_injection_store_equality)
     ASSERT_EQ(p_recv(&g_b, &g_a, m, ml, out, &ol), GY_OK);
 
     /* Snapshot, then fail the FIRST store of the next commit: nothing has been
-     * written yet, so the store is byte-identical to the snapshot (D-SES-10). */
+     * written yet, so the store is byte-identical to the snapshot (D-SES-10).
+     */
     as_snapshot(&g_snap, &g_a.st);
     g_a.st.write_idx = 0;
     g_a.st.fail_at = 0;

@@ -10,6 +10,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,7 +20,8 @@
 
 #include "gy_test.h"
 
-/* ---- in-memory store: identity blob sized to the (large) hybrid material --- */
+/* ---- in-memory store: identity blob sized to the (large) hybrid material ---
+ */
 
 #define MOCK_MAX 16
 /* Hybrid session records are large (GY_SESSION_BLOB_MAX), plus sealed-store
@@ -39,6 +41,12 @@ struct mstore {
     uint8_t identity[MOCK_IDENT_BLOB];
     size_t identity_len;
 };
+
+/* The hybrid suite under test, pinned by main() to each hybrid tier in turn so
+ * the full custodian lifecycle - including the largest key material (the
+ * ML-DSA-87 identity secret) sealed, opened, and wiped on close - is swept at
+ * both h25519_512 and h448_1024 (zeroization sweep at the 448-tier sizes). */
+static uint8_t g_suite;
 
 static struct mrec *
 mfind(struct mstore *m, int kind, const uint8_t *id, size_t id_len)
@@ -187,10 +195,9 @@ TEST(hybrid_identity_roundtrip)
     static const uint8_t did[] = "device-1";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_H25519_512, &cb,
-                                  (const uint8_t *)cred, strlen(cred), uid,
-                                  sizeof(uid) - 1, did, sizeof(did) - 1, NULL,
-                                  NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), uid, sizeof(uid) - 1, did,
+                                  sizeof(did) - 1, NULL, NULL, NULL),
               GY_OK);
     ASSERT_TRUE(c != NULL, "created hybrid custodian");
     ASSERT_TRUE(c->desc->is_hybrid, "custodian is hybrid");
@@ -204,7 +211,8 @@ TEST(hybrid_identity_roundtrip)
     saved_ik = hc->hik.pub;
     saved_spk_pkid = hc->hspks[0].kp.pub.curve.pkid;
     saved_opk_pkid = hc->hopks[0].pub.curve.pkid;
-    /* The classical base identity stays unused (zero) for a hybrid custodian. */
+    /* The classical base identity stays unused (zero) for a hybrid custodian.
+     */
     ASSERT_EQ(hc->base.ik.pub.curve_type, 0);
 
     gy_custodian_close(c);
@@ -213,7 +221,7 @@ TEST(hybrid_identity_roundtrip)
     ASSERT_EQ(gy_custodian_open(&c, &cb, (const uint8_t *)cred, strlen(cred)),
               GY_OK);
     ASSERT_TRUE(c != NULL, "reopened hybrid custodian");
-    ASSERT_EQ(c->suite_id, GY_SUITE_H25519_512);
+    ASSERT_EQ(c->suite_id, g_suite);
     ASSERT_EQ(c->have_identity, 1);
 
     hc = (struct gy_hybrid_custodian *)c;
@@ -245,10 +253,9 @@ TEST(hybrid_prekey_lifecycle)
     static const uint8_t did[] = "d";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_H25519_512, &cb,
-                                  (const uint8_t *)cred, strlen(cred), uid,
-                                  sizeof(uid) - 1, did, sizeof(did) - 1, NULL,
-                                  NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), uid, sizeof(uid) - 1, did,
+                                  sizeof(did) - 1, NULL, NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(c, 100, 2), GY_OK);
     hc = (struct gy_hybrid_custodian *)c;
@@ -298,7 +305,7 @@ TEST(hybrid_publish)
     static struct mstore m;
     gy_store_callbacks cb;
     struct gy_custodian *c;
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = gy_suite_desc(g_suite);
     struct gy_hybrid_prekey_bundle pb;
     static struct gy_hybrid_public_key opks[GY_OPK_BATCH_MAX];
     uint8_t *buf;
@@ -309,10 +316,9 @@ TEST(hybrid_publish)
     static const uint8_t did[] = "d";
 
     mstore_bind(&m, &cb);
-    ASSERT_EQ(gy_custodian_create(&c, GY_SUITE_H25519_512, &cb,
-                                  (const uint8_t *)cred, strlen(cred), uid,
-                                  sizeof(uid) - 1, did, sizeof(did) - 1, NULL,
-                                  NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&c, g_suite, &cb, (const uint8_t *)cred,
+                                  strlen(cred), uid, sizeof(uid) - 1, did,
+                                  sizeof(did) - 1, NULL, NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(c, 100, 2), GY_OK);
 
@@ -361,8 +367,8 @@ static const uint8_t E_BDID[] = "bob-dev";
 
 /*
  * Full hybrid exchange through the PUBLIC API (b-iii-3): two hybrid custodians
- * complete an initiation and a reply, plaintext round-trips both directions, and
- * gy_pq_pending advances from PENDING to CONFIRMED as the responder's KEM
+ * complete an initiation and a reply, plaintext round-trips both directions,
+ * and gy_pq_pending advances from PENDING to CONFIRMED as the responder's KEM
  * confirmation reaches the initiator (HYBRID_SPEC section 8.4).  gy_encrypt /
  * gy_receive dispatch on the session suite; gy_initiate routes to the hybrid
  * send path; gy_self_fingerprint reports each hybrid IKhash.
@@ -384,15 +390,13 @@ TEST(hybrid_api_end_to_end)
     mstore_bind(&ma, &acb);
     mstore_bind(&mb, &bcb);
 
-    ASSERT_EQ(gy_custodian_create(&alice, GY_SUITE_H25519_512, &acb,
-                                  (const uint8_t *)acred, strlen(acred), E_AUID,
-                                  sizeof(E_AUID) - 1, E_ADID,
-                                  sizeof(E_ADID) - 1, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&alice, g_suite, &acb, (const uint8_t *)acred,
+                                  strlen(acred), E_AUID, sizeof(E_AUID) - 1,
+                                  E_ADID, sizeof(E_ADID) - 1, NULL, NULL, NULL),
               GY_OK);
-    ASSERT_EQ(gy_custodian_create(&bob, GY_SUITE_H25519_512, &bcb,
-                                  (const uint8_t *)bcred, strlen(bcred), E_BUID,
-                                  sizeof(E_BUID) - 1, E_BDID,
-                                  sizeof(E_BDID) - 1, NULL, NULL, NULL),
+    ASSERT_EQ(gy_custodian_create(&bob, g_suite, &bcb, (const uint8_t *)bcred,
+                                  strlen(bcred), E_BUID, sizeof(E_BUID) - 1,
+                                  E_BDID, sizeof(E_BDID) - 1, NULL, NULL, NULL),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(alice, 1000, 4), GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(bob, 1000, 4), GY_OK);
@@ -461,15 +465,24 @@ TEST(hybrid_api_end_to_end)
 int
 main(void)
 {
-    if (gy_suite_desc(GY_SUITE_H25519_512) == NULL)
-        return 1;
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(hybrid_identity_roundtrip),
-            GY_TEST(hybrid_prekey_lifecycle),
-            GY_TEST(hybrid_publish),
-            GY_TEST(hybrid_api_end_to_end),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(hybrid_identity_roundtrip),
+        GY_TEST(hybrid_prekey_lifecycle),
+        GY_TEST(hybrid_publish),
+        GY_TEST(hybrid_api_end_to_end),
+    };
+    size_t s;
+    int rc = 0;
+
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        const struct gy_suite_desc *d = gy_suite_desc(suites[s]);
+
+        if (d == NULL)
+            return 1;
+        g_suite = suites[s];
+        printf("== suite %s ==\n", d->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

@@ -139,7 +139,8 @@ gy_hybrid_dr_init_alice(struct gy_hybrid_dr_state *st,
     st->have_remote_ek = 1;
     st->mlkem_interval = mlkem_interval;
 
-    /* Initiator (section 8): hold the identity dk to open Bob's confirmation. */
+    /* Initiator (section 8): hold the identity dk to open Bob's confirmation.
+     */
     st->role = GY_HYBRID_ROLE_INITIATOR;
     st->pq_state = GY_HYBRID_PQ_CLASSICAL_ONLY;
     memcpy(st->id_mlkem_dk, id_mlkem_dk, desc->kem_sk_len);
@@ -161,7 +162,8 @@ gy_hybrid_dr_init_alice(struct gy_hybrid_dr_state *st,
     rc = gen_kem_keypair(desc, st->mlkem_ek, st->mlkem_dk);
     if (rc != GY_OK)
         goto err;
-    /* Fresh ML-KEM key: the first sending chain advertises the ek (section 7.3). */
+    /* Fresh ML-KEM key: the first sending chain advertises the ek
+     * (section 7.3). */
     st->send_ek_pending = 1;
 
     /* Initial sending ratchet (section 7.3, sending half). */
@@ -237,7 +239,8 @@ gy_hybrid_dr_init_bob(struct gy_hybrid_dr_state *st,
     st->mlkem_counter = mlkem_interval;
     /* remote_ek invalid until Alice's first header arrives. */
 
-    /* Responder (section 8): confirm to Alice's identity ek in the 1st chain. */
+    /* Responder (section 8): confirm to Alice's identity ek in the 1st chain.
+     */
     st->role = GY_HYBRID_ROLE_RESPONDER;
     st->pq_state = GY_HYBRID_PQ_CLASSICAL_ONLY;
     memcpy(st->id_mlkem_ek, initiator_id_mlkem_ek, desc->kem_pk_len);
@@ -250,11 +253,11 @@ gy_hybrid_dr_init_bob(struct gy_hybrid_dr_state *st,
 /*
  * Hybrid DH ratchet step (section 7.3), run on a staged state.  Advances
  * counters, derives the receiving chain (ML-KEM decaps with the CURRENT own dk,
- * before any regeneration), refreshes the ML-KEM keypair on the interval and the
- * curve keypair every step, then derives the sending chain (fresh encapsulation
- * to the cached remote ek).  hdh = HASH(kem_ss || dh) is mixed into each root
- * KDF.  A header lacking mlkem_ek when no valid remote key is cached is rejected
- * (section 7.3) before any derivation.
+ * before any regeneration), refreshes the ML-KEM keypair on the interval and
+ * the curve keypair every step, then derives the sending chain (fresh
+ * encapsulation to the cached remote ek).  hdh = HASH(kem_ss || dh) is mixed
+ * into each root KDF.  A header lacking mlkem_ek when no valid remote key is
+ * cached is rejected (section 7.3) before any derivation.
  */
 static int
 hybrid_dh_ratchet(struct gy_hybrid_dr_state *st,
@@ -354,8 +357,9 @@ hybrid_dh_ratchet(struct gy_hybrid_dr_state *st,
 
     /*
      * KEM confirmation (section 8.2): the responder's FIRST sending chain
-     * encapsulates to Alice's identity ek and fuses confirm_ss into this chain's
-     * root (confirmation form).  confirm_ct rides every header of the chain.
+     * encapsulates to Alice's identity ek and fuses confirm_ss into this
+     * chain's root (confirmation form).  confirm_ct rides every header of the
+     * chain.
      */
     send_confirm = st->confirm_pending;
     if (send_confirm) {
@@ -381,7 +385,8 @@ hybrid_dh_ratchet(struct gy_hybrid_dr_state *st,
     /* Advertise the ek in this sending chain iff its keypair was refreshed. */
     st->send_ek_pending = regen;
 
-    /* Section 8.4 state transitions (committed only if the payload verifies). */
+    /* Section 8.4 state transitions (committed only if the payload verifies).
+     */
     if (send_confirm) {
         st->send_confirm_pending = 1;
         st->confirm_pending = 0;
@@ -435,7 +440,8 @@ gy_hybrid_dr_encrypt(struct gy_hybrid_dr_state *st, uint8_t *out, size_t cap,
     desc = b->desc;
     taglen = gy_aead_tag_len(b->aead_id);
 
-    /* Header plaintext (section 7.6): flags || curve_pk || kem_ct || pn || n. */
+    /* Header plaintext (section 7.6): flags || curve_pk || kem_ct || pn || n.
+     */
     memset(&h, 0, sizeof(h));
     h.flags = desc->curve_type;
     if (st->send_ek_pending) {
@@ -505,7 +511,8 @@ out:
     return rc;
 }
 
-/* enc_header_len is valid iff it is one of the four section 7.6 combinations. */
+/* enc_header_len is valid iff it is one of the four section 7.6 combinations.
+ */
 static int
 enc_header_len_ok(const struct gy_suite_desc *desc, size_t ehl, size_t taglen)
 {
@@ -600,8 +607,8 @@ gy_hybrid_dr_decrypt_assoc(struct gy_hybrid_dr_state *st, uint8_t *out,
         /*
          * A stored skipped key is from an already-validated epoch, so its bit 9
          * needs no re-check here (the epoch's confirmation, if any, was handled
-         * at its ratchet); the (epoch, n) match and the AD-bound payload tag are
-         * the arbiters.
+         * at its ratchet); the (epoch, n) match and the AD-bound payload tag
+         * are the arbiters.
          */
         for (i = 0; i < b->skipped.count; i++) {
             if (b->skipped.ent[i].epoch != slot || b->skipped.ent[i].n != h.n)
@@ -661,9 +668,10 @@ gy_hybrid_dr_decrypt_assoc(struct gy_hybrid_dr_state *st, uint8_t *out,
         return GY_ERR_ARG;
     /*
      * Confirmation flag (bit 9): the responder must never receive it (the
-     * initiator does not send confirmation).  For the initiator it is valid only
-     * on the confirm epoch; the ratchet step enforces that (a same-epoch HKr
-     * message of the confirm chain legitimately carries it and is not a ratchet).
+     * initiator does not send confirmation).  For the initiator it is valid
+     * only on the confirm epoch; the ratchet step enforces that (a same-epoch
+     * HKr message of the confirm chain legitimately carries it and is not a
+     * ratchet).
      */
     if ((h.flags & GY_DR_FLAG_CONFIRM_CT_PRESENT) &&
         st->role == GY_HYBRID_ROLE_RESPONDER)

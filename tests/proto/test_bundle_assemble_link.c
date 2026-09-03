@@ -167,7 +167,8 @@ TEST(opk_batch_enumerate_and_slice)
             GY_OK);
     }
 
-    /* An index at or past the count is NOT_FOUND, never an out-of-bounds read. */
+    /* An index at or past the count is NOT_FOUND, never an out-of-bounds read.
+     */
     ASSERT_EQ(gy_opk_batch_get(batch, batchlen, 3, &slice, &slicelen),
               GY_ERR_NOT_FOUND);
 

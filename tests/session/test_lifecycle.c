@@ -215,7 +215,8 @@ load_device(struct gy_device_record *d)
     gy_op_abort(&g_op);
 }
 
-/* Load the DeviceRecord for an arbitrary (user_id, device_id); returns found. */
+/* Load the DeviceRecord for an arbitrary (user_id, device_id); returns found.
+ */
 static int
 load_pair(const uint8_t *uid, size_t ul, const uint8_t *did, size_t dl,
           struct gy_device_record *d)
@@ -676,11 +677,13 @@ int
 main(void)
 {
     /*
-     * The identity/session lifecycle runs under both classical
-     * suites; hybrid_key_change_pq_only keys on DH (h25519_512) and re-runs
-     * identically under each iteration.
+     * The identity/session lifecycle runs under both classical suites;
+     * hybrid_key_change_pq_only keys on DH.  D and DH are paired by tier (25519
+     * family, then 448 family) so the hybrid case is exercised at BOTH hybrid
+     * tiers, not just h25519_512.
      */
     static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const uint8_t hsuites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
     static const struct gy_test_case cases[] = {
         GY_TEST(conditional_update_tofu),
         GY_TEST(conditional_update_same_key_noop),
@@ -702,14 +705,12 @@ main(void)
 
     if (gy_core_init() != GY_OK)
         return 1;
-    DH = gy_suite_desc(GY_SUITE_H25519_512);
-    if (DH == NULL)
-        return 1;
     for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
         D = gy_suite_desc(suites[s]);
-        if (D == NULL)
+        DH = gy_suite_desc(hsuites[s]);
+        if (D == NULL || DH == NULL)
             return 1;
-        printf("== suite %s ==\n", D->name);
+        printf("== suite %s / %s ==\n", D->name, DH->name);
         rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
     return rc;

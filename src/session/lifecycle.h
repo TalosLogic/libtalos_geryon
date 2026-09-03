@@ -16,10 +16,11 @@
  * D-SES-2/5/7/9, D-X3DH-11).  These operations sit on top of the record model
  * (session.h) and the transactional staging engine (store.h): each one loads
  * what it needs through a gy_op, mutates records in memory, and stages the
- * results, leaving the single commit point to the caller (except gy_delete_user,
- * which spans more state than one transaction can hold and drives its own
- * commits, noted below).  Nothing here owns a clock (D-SES-7): wall time enters
- * only as an argument the application sources from its own clock callback.
+ * results, leaving the single commit point to the caller (except
+ * gy_delete_user, which spans more state than one transaction can hold and
+ * drives its own commits, noted below).  Nothing here owns a clock (D-SES-7):
+ * wall time enters only as an argument the application sources from its own
+ * clock callback.
  */
 
 /* ---- session expiration (D-SES-7, section 4.2) ------------------------- */
@@ -124,10 +125,10 @@ int gy_conditional_update(struct gy_op *op, uint8_t suite_id,
 
 /*
  * Hybrid conditional update: as gy_conditional_update, but tracks and compares
- * the FULL hybrid identity (curve + ML-KEM + ML-DSA, section 4.2) so a change of
- * ANY component fails closed with GY_ERR_KEY_CHANGED.  The stored DeviceRecord
- * is the composed gy_hybrid_device_record and the fingerprint is IKhash over the
- * whole identity.  suite_id must name a hybrid suite.
+ * the FULL hybrid identity (curve + ML-KEM + ML-DSA, section 4.2) so a change
+ * of ANY component fails closed with GY_ERR_KEY_CHANGED.  The stored
+ * DeviceRecord is the composed gy_hybrid_device_record and the fingerprint is
+ * IKhash over the whole identity.  suite_id must name a hybrid suite.
  */
 int gy_hybrid_conditional_update(struct gy_op *op, uint8_t suite_id,
                                  const uint8_t *user_id, size_t user_id_len,

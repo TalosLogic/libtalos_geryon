@@ -21,8 +21,8 @@ static const uint64_t TS = 0x0000000155667788ull;
 #define AEAD GY_AEAD_CHACHA20POLY1305
 
 /*
- * Classical enc_header and frame overhead as a function of the suite descriptor:
- * enc_header = flags(4) || ratchet_pk(curve_pk_len) || pn(4) ||
+ * Classical enc_header and frame overhead as a function of the suite
+ * descriptor: enc_header = flags(4) || ratchet_pk(curve_pk_len) || pn(4) ||
  * n(4) || AEAD tag(16); the header AEAD is ChaCha20-Poly1305 here, tag 16.  For
  * c25519 this is 4+32+8+16 = 60, for c448 4+56+8+16 = 84 - the same fixed value
  * the ratchet enforces per D-DR-16, validated at both tiers.
@@ -117,7 +117,8 @@ TEST(init_mapping_roles)
     ASSERT_EQ(gy_dr_init_bob(&bob, D, AEAD, &sb, &bob_spk_kp), GY_OK);
     ASSERT_EQ(gy_dr_init_alice(&alice, D, AEAD, &sa, bob_spk_pub), GY_OK);
 
-    /* Mapping at init (D-DR-13): Alice HKs = hka; Bob NHKr = hka, NHKs = nhkb. */
+    /* Mapping at init (D-DR-13): Alice HKs = hka; Bob NHKr = hka, NHKs = nhkb.
+     */
     ASSERT_EQ(alice.have_hks, 1);
     ASSERT_MEMEQ(alice.hks, exp_hka, 32);
     ASSERT_EQ(alice.have_hkr, 0);
@@ -152,7 +153,8 @@ TEST(init_mapping_roles)
     gy_dr_free(&bob);
 }
 
-/* A wrong enc_header_len is rejected before any key derivation (section 7.8.4). */
+/* A wrong enc_header_len is rejected before any key derivation (section 7.8.4).
+ */
 TEST(enc_header_len_rejected)
 {
     struct gy_dr_secrets sa, sb;
@@ -197,7 +199,8 @@ TEST(bad_prefix_rejected)
                             (const uint8_t *)"x", 1, ad, adl),
               GY_OK);
     save = wire[1];
-    /* Cross-suite: a suite byte other than the running one (holds at both tiers). */
+    /* Cross-suite: a suite byte other than the running one (holds at both
+     * tiers). */
     wire[1] = (D->suite_id == GY_SUITE_C448) ? GY_SUITE_C25519 : GY_SUITE_C448;
     ASSERT_EQ(
         gy_dr_decrypt(&bob, out, sizeof(out), &outlen, wire, wirelen, ad, adl),

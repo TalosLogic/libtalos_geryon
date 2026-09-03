@@ -26,7 +26,8 @@ hxfix(uint8_t out[56], const char *hex)
     (void)gy_hex_decode(out, 56, hex);
 }
 
-/* RFC 7748 section 5.2, X448 scalar multiplication (decaf clamps internally). */
+/* RFC 7748 section 5.2, X448 scalar multiplication (decaf clamps internally).
+ */
 TEST(rfc7748_5_2_scalarmult)
 {
     uint8_t sk[56], u[56], out[56], want[56];

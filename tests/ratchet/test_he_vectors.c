@@ -34,7 +34,8 @@ static struct gy_keypair g_fixed[6];
 static size_t g_fixed_idx;
 static uint8_t g_salt_ctr;
 
-/* The suite's vector file (a distinct seeded conversation per classical tier). */
+/* The suite's vector file (a distinct seeded conversation per classical tier).
+ */
 static const char *
 vec_path(void)
 {

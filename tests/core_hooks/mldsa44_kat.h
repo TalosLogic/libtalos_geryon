@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * ML-DSA-44 sigVer known-answer vectors (D-PQ-1/3). These pin the gy_mldsa_
+ * ML-DSA-44 sigVer known-answer vectors (D-PQ-1/3). These pin the gy_mldsa44_
  * verify path to FIPS 204 independent of the backing library (liboqs), the
  * way test_ed25519 pins the ed25519 verify path. ML-DSA sign is hedged, so
  * the sign path is covered by round-trip + smoke, not an output KAT.

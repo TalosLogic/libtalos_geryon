@@ -65,7 +65,7 @@ extern "C" {
 /* ---- versioning -------------------------------------------------------- */
 
 #define GY_VERSION_MAJOR 1
-#define GY_VERSION_MINOR 2
+#define GY_VERSION_MINOR 3
 #define GY_VERSION_PATCH 0
 #define GY_PROTOCOL_VERSION 0x01 /* wire version byte (D-GEN-1). */
 
@@ -74,8 +74,9 @@ extern "C" {
 #define GY_SUITE_C25519 0x01 /* X25519 + XEdDSA, SHA-256 (classical). */
 #define GY_SUITE_H25519_512                                                    \
     0x02 /* X25519 + ML-KEM-512, XEdDSA + ML-DSA-44 (hybrid). */
-#define GY_SUITE_C448 0x03      /* X448 + XEd448, SHA-512 (classical). */
-#define GY_SUITE_H448_1024 0x04 /* reserved for a future suite. */
+#define GY_SUITE_C448 0x03 /* X448 + XEd448, SHA-512 (classical). */
+#define GY_SUITE_H448_1024                                                     \
+    0x04 /* X448 + ML-KEM-1024, XEd448 + ML-DSA-87 (hybrid). */
 
 /*
  * Error codes (ABI-stable; every code documented).  Defined as macros so they
@@ -86,31 +87,31 @@ extern "C" {
 #define GY_ERR_ARG -1    /* NULL/short argument or a bad length. */
 #define GY_ERR_CRYPTO -2 /* Underlying crypto provider failure. */
 #define GY_ERR_VERIFY                                                          \
-    -3                     /* Signature/tag/comparison mismatch; also the
-                             * single UNIFORM error a rejected received message
-                             * returns (D-SES-6.2): no session, bad tag, and
-                             * garbage are indistinguishable to callers. */
+    -3                     /* Signature/tag/comparison mismatch; also the      \
+                            * single UNIFORM error a rejected received message \
+                            * returns (D-SES-6.2): no session, bad tag, and    \
+                            * garbage are indistinguishable to callers. */
 #define GY_ERR_TOOLONG -4  /* Input exceeds a protocol length bound. */
 #define GY_ERR_WEAK_KEY -5 /* Degenerate/all-zero DH output. */
 #define GY_ERR_STATE                                                           \
-    -6                        /* Operation invalid in the current state, or a
-                             * cross-suite message (downgrade signal). */
+    -6                        /* Operation invalid in the current state, or a  \
+                               * cross-suite message (downgrade signal). */
 #define GY_ERR_UNSUPPORTED -7 /* Feature unavailable on this build/CPU. */
 #define GY_ERR_KEY_CHANGED                                                     \
-    -8 /* Peer identity key changed; fail-closed until
-                               * gy_accept_identity (fingerprints in the
-                               * gy_keychange out-struct). */
+    -8 /* Peer identity key changed; fail-closed until                         \
+        * gy_accept_identity (fingerprints in the                              \
+        * gy_keychange out-struct). */
 #define GY_ERR_EXPIRED                                                         \
-    -9 /* Session past its expiration bound (never encrypt
-                             * under a stale session). */
+    -9 /* Session past its expiration bound (never encrypt                     \
+        * under a stale session). */
 #define GY_ERR_NOT_FOUND                                                       \
-    -10 /* Custodian lifecycle: unknown key handle or key id.
-                              * Kept off the receive/verify
-                              * path (D-SES-6.2 keeps GY_ERR_VERIFY uniform). */
+    -10 /* Custodian lifecycle: unknown key handle or key id.                  \
+         * Kept off the receive/verify                                         \
+         * path (D-SES-6.2 keeps GY_ERR_VERIFY uniform). */
 #define GY_ERR_NO_SPACE                                                        \
-    -11 /* Custodian lifecycle: key-slot table exhausted;
-                              * a fixed HSM-style bound, not
-                              * runtime-mutable. */
+    -11 /* Custodian lifecycle: key-slot table exhausted;                      \
+         * a fixed HSM-style bound, not                                        \
+         * runtime-mutable. */
 
 /* ---- bounds (mirror the internal record model) ------------------------- */
 
@@ -155,6 +156,71 @@ typedef struct gy_store_callbacks {
     int (*consume_opk)(void *ctx, uint32_t pkid);
 } gy_store_callbacks;
 
+/*
+ * Store-buffer sizing.  The identity and record load/store callbacks above
+ * receive a COMPLETE blob and a cap; unlike the wire calls (gy_publish_bundle,
+ * gy_encrypt, ... which offer an out == NULL size-query), the store callbacks
+ * have no size-query, so a fixed-buffer store must size its buffers from these
+ * bounds up front.  A file- or heap-backed store can ignore them.
+ *
+ * They split by suite family: a classical-only deployment (the size/bandwidth-
+ * constrained case the classical suites exist for) needs only the _CLASSICAL
+ * bound; a hybrid deployment needs the _HYBRID bound, which covers BOTH hybrid
+ * tiers (h25519_512 and h448_1024 share one max-sized storage layout in this
+ * release; per-tier sizing is a planned refinement).  A store that serves an
+ * unknown suite sizes to _HYBRID.  The library guarantees, via a build-time
+ * assertion against the internal record model, that these bounds are never
+ * exceeded.
+ */
+
+/* store_identity / load_identity buffer: the sealed bootstrap identity blob. */
+#define GY_STORE_IDENTITY_BLOB_MAX_CLASSICAL 16384
+#define GY_STORE_IDENTITY_BLOB_MAX_HYBRID 655360
+
+/*
+ * store_record / load_record buffer: the largest record.  A SessionRecord at
+ * its worst-case skip store dominates (device and user records are far
+ * smaller); the session bound is one value, so this is family-independent.
+ */
+#define GY_STORE_RECORD_BLOB_MAX 112640
+
+/*
+ * Wire-buffer sizing.  The wire calls (gy_publish_bundle, gy_encrypt,
+ * gy_initiate, gy_custodian_publish_registration / _opk_batch,
+ * gy_custodian_export_appkey_cert) all accept out == NULL to report the exact
+ * size, so a caller can always query-then-allocate.  These are the compile-time
+ * upper bounds for callers that prefer a fixed buffer, split by suite family
+ * (hybrid covers BOTH hybrid tiers; a caller serving an unknown suite sizes to
+ * _HYBRID).  A build-time and test-time check keeps them ahead of the wire
+ * formulas.
+ */
+#define GY_BUNDLE_MAX_CLASSICAL 512
+#define GY_BUNDLE_MAX_HYBRID 12288
+/* A registration is a bundle without the one-time prekey; the bundle bound
+ * covers it. */
+#define GY_REGISTRATION_MAX_CLASSICAL GY_BUNDLE_MAX_CLASSICAL
+#define GY_REGISTRATION_MAX_HYBRID GY_BUNDLE_MAX_HYBRID
+#define GY_APPKEY_CERT_MAX_CLASSICAL 512
+#define GY_APPKEY_CERT_MAX_HYBRID 8192
+/* A gy_custodian_sign request signature (hybrid: XEdDSA plus ML-DSA-87). */
+#define GY_APPKEY_SIG_MAX_CLASSICAL 512
+#define GY_APPKEY_SIG_MAX_HYBRID 8192
+/*
+ * Per one-time prekey on the wire: a published batch of n prekeys is at most
+ * GY_OPK_BATCH_HDR + n * GY_OPK_WIRE_MAX_<family>, so a caller sizes its batch
+ * buffer to the count it actually publishes rather than the pool maximum.
+ */
+#define GY_OPK_BATCH_HDR 4
+#define GY_OPK_WIRE_MAX_CLASSICAL 128
+#define GY_OPK_WIRE_MAX_HYBRID 1664
+/*
+ * Per-message wire OVERHEAD (envelope || handshake-or-DR header || AEAD tag).
+ * A message buffer is this plus the caller's own maximum plaintext; the initial
+ * hybrid handshake message dominates the overhead.
+ */
+#define GY_MESSAGE_OVERHEAD_MAX_CLASSICAL 1024
+#define GY_MESSAGE_OVERHEAD_MAX_HYBRID 9216
+
 /* Optional monotone clock (D-SES-7: time enters only through this callback). */
 typedef uint64_t (*gy_clock_fn)(void *ctx);
 
@@ -187,7 +253,8 @@ typedef struct gy_target {
 
 /* Per-device fan-out disposition from gy_prepare. */
 #define GY_FANOUT_MESSAGE 1      /* has a usable session: gy_encrypt. */
-#define GY_FANOUT_NEEDS_BUNDLE 2 /* no session: fetch a bundle, gy_initiate. */
+#define GY_FANOUT_NEEDS_BUNDLE 2 /* no session: fetch a bundle, gy_initiate.   \
+                                  */
 #define GY_FANOUT_STALE 3        /* session expired (D-SES-7): do not send. */
 
 typedef struct gy_fanout_desc {
@@ -270,7 +337,8 @@ GY_EXPORT int gy_custodian_open(gy_custodian **out,
                                 const gy_store_callbacks *store,
                                 const uint8_t *cred, size_t cred_len);
 
-/* Lock: zeroize the KEK and all unlocked material, and free *c (safe on NULL). */
+/* Lock: zeroize the KEK and all unlocked material, and free *c (safe on NULL).
+ */
 GY_EXPORT void gy_custodian_close(gy_custodian *c);
 
 /*
@@ -318,7 +386,8 @@ GY_EXPORT int gy_custodian_generate_identity(gy_custodian *c,
  */
 GY_EXPORT int gy_publish_bundle(gy_custodian *c, uint8_t *out, size_t *out_len);
 
-/* Write this identity's fingerprint (D-X3DH-11); display encoding is app scope. */
+/* Write this identity's fingerprint (D-X3DH-11); display encoding is app scope.
+ */
 GY_EXPORT int gy_self_fingerprint(gy_custodian *c, uint8_t *out,
                                   size_t *out_len);
 
@@ -335,7 +404,8 @@ GY_EXPORT int gy_send_open(gy_custodian *c);
 GY_EXPORT int gy_prepare(gy_custodian *c, const gy_target *targets, size_t n,
                          gy_fanout_desc *descs, size_t *desc_count);
 
-/* Encrypt one plaintext for one device's active session (GY_ERR_EXPIRED if stale). */
+/* Encrypt one plaintext for one device's active session (GY_ERR_EXPIRED if
+ * stale). */
 GY_EXPORT int gy_encrypt(gy_custodian *c, const uint8_t *user_id,
                          size_t user_id_len, const uint8_t *device_id,
                          size_t device_id_len, const uint8_t *pt, size_t ptlen,

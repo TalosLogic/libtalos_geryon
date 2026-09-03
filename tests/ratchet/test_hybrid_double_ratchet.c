@@ -68,7 +68,7 @@ static void
 hrelay(struct gy_hybrid_dr_state *from, struct gy_hybrid_dr_state *to,
        const uint8_t *ad, size_t adl, const char *pt)
 {
-    uint8_t wire[4096], out[512];
+    uint8_t wire[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[512];
     size_t wl, ol, ptlen = strlen(pt);
 
     ASSERT_EQ(gy_hybrid_dr_encrypt(from, wire, sizeof(wire), &wl,
@@ -114,7 +114,8 @@ TEST(init_mapping)
     ASSERT_EQ(bob.confirm_pending, 1);
     ASSERT_EQ(gy_is_zero(sb.sk_dr, 32), 1);
 
-    /* Alice: ratchets on init -> sending chain, cached remote ek, ek pending. */
+    /* Alice: ratchets on init -> sending chain, cached remote ek, ek pending.
+     */
     ASSERT_EQ(
         gy_hybrid_dr_init_alice(&alice, D, AEAD, &sa, &bob_spk.pub, 5, aik_dk),
         GY_OK);
@@ -210,7 +211,9 @@ TEST(out_of_order)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0x11, 0x22};
-    uint8_t w0[4096], w1[4096], w2[4096], out[64];
+    uint8_t w0[GY_DR_HYBRID_HDR_WIRE_MAX + 512],
+        w1[GY_DR_HYBRID_HDR_WIRE_MAX + 512],
+        w2[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t l0, l1, l2, ol;
 
     hybrid_setup(&alice, &bob, 1);
@@ -244,14 +247,16 @@ TEST(dropped_across_refresh)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0x33, 0x44};
-    uint8_t w1[4096], w2[4096], out[64];
+    uint8_t w1[GY_DR_HYBRID_HDR_WIRE_MAX + 512],
+        w2[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t l1, l2, ol;
 
     hybrid_setup(&alice, &bob, 1); /* interval 1: each ratchet refreshes */
     hrelay(&alice, &bob, ad, sizeof(ad), "a0");
     hrelay(&bob, &alice, ad, sizeof(ad), "b0");
 
-    /* Alice's new epoch: a1 is dropped, a2 delivered (bob ratchets, skips a1). */
+    /* Alice's new epoch: a1 is dropped, a2 delivered (bob ratchets, skips a1).
+     */
     ASSERT_EQ(gy_hybrid_dr_encrypt(&alice, w1, sizeof(w1), &l1,
                                    (const uint8_t *)"a1", 2, ad, sizeof(ad)),
               GY_OK);
@@ -277,10 +282,21 @@ TEST(header_len_combos)
     uint8_t buf[GY_DR_HYBRID_HEADER_MAX];
     size_t outlen, consumed, i;
 
-    ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 0), 812);
-    ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 0), 1612);
-    ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 1), 1580);
-    ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 1), 2380);
+    /* The four section 7.6 plaintext header lengths are pinned per tier:
+     * 12 + curve_pk + kem_ct + ek*kem_pk + confirm*kem_ct.  h25519_512 uses
+     * curve_pk 32 / kem_ct 768 / kem_pk 800; h448_1024 uses 56 / 1568 / 1568
+     * (ML-KEM-1024's ek and ct are both 1568, so +ek and +confirm coincide). */
+    if (D->curve_type == GY_CURVE_TYPE_448) {
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 0), 1636);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 0), 3204);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 1), 3204);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 1), 4772);
+    } else {
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 0), 812);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 0), 1612);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 0, 1), 1580);
+        ASSERT_EQ(gy_dr_hybrid_header_len(D, 1, 1), 2380);
+    }
 
     for (i = 0; i < 4; i++) {
         int ek = (int)(i & 1), cf = (int)((i >> 1) & 1);
@@ -317,12 +333,13 @@ TEST(header_len_combos)
     }
 }
 
-/* On the wire: Alice's first chain carries the ek; a non-refresh chain does not. */
+/* On the wire: Alice's first chain carries the ek; a non-refresh chain does
+ * not. */
 TEST(header_ek_scheduling)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0x55, 0x66};
-    uint8_t wire[4096], out[64];
+    uint8_t wire[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t wl, ol, tag;
 
     tag = gy_aead_tag_len(AEAD);
@@ -370,11 +387,12 @@ TEST(missing_ek_rejected)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0x77, 0x88};
-    uint8_t wire[4096], out[64];
+    uint8_t wire[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t wl, ol;
 
     hybrid_setup(&alice, &bob, 1);
-    /* Force Alice's first header compact (no ek) to strip Bob of a cached key. */
+    /* Force Alice's first header compact (no ek) to strip Bob of a cached key.
+     */
     alice.send_ek_pending = 0;
     ASSERT_EQ(gy_hybrid_dr_encrypt(&alice, wire, sizeof(wire), &wl,
                                    (const uint8_t *)"nope", 4, ad, sizeof(ad)),
@@ -393,12 +411,13 @@ TEST(missing_ek_rejected)
     gy_hybrid_dr_free(&bob);
 }
 
-/* A bad enc_header_len (not one of the four combos) is rejected pre-derivation. */
+/* A bad enc_header_len (not one of the four combos) is rejected pre-derivation.
+ */
 TEST(bad_enc_header_len_rejected)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0x12, 0x34};
-    uint8_t wire[4096], out[64];
+    uint8_t wire[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t wl, ol;
 
     hybrid_setup(&alice, &bob, 1);
@@ -453,7 +472,8 @@ TEST(tamper_matrix)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t ad[2] = {0xAB, 0xCD};
-    uint8_t wire[4096], bad[4096], out[64];
+    uint8_t wire[GY_DR_HYBRID_HDR_WIRE_MAX + 512],
+        bad[GY_DR_HYBRID_HDR_WIRE_MAX + 512], out[64];
     size_t wl, ol, offs[6], i;
 
     hybrid_setup(&alice, &bob, 1);
@@ -547,10 +567,12 @@ TEST(determinism)
     struct gy_hybrid_dr_state st1, st2;
     uint8_t ad[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     uint8_t aik_ek[GY_KEM_EK_MAX], aik_dk[GY_KEM_DK_MAX];
-    uint8_t w1[4096], w2[4096];
+    uint8_t w1[GY_DR_HYBRID_HDR_WIRE_MAX + 256];
+    uint8_t w2[GY_DR_HYBRID_HDR_WIRE_MAX + 256];
     size_t l1, l2, i;
 
-    /* Bob's SPK and the fixed ML-KEM material generated once, reused by both. */
+    /* Bob's SPK and the fixed ML-KEM material generated once, reused by both.
+     */
     ASSERT_EQ(gy_hybrid_keypair_generate(D, &bob_spk), GY_OK);
     ASSERT_EQ(D->kem_keypair(aik_ek, aik_dk), GY_OK);
     for (i = 0; i < 4; i++)
@@ -612,32 +634,38 @@ TEST(zeroize)
 int
 main(void)
 {
+    /* The whole file is descriptor-generic; run it for each hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(init_mapping),
+        GY_TEST(ping_pong_interval1),
+        GY_TEST(ping_pong_interval2),
+        GY_TEST(ping_pong_interval20),
+        GY_TEST(ping_pong_interval100),
+        GY_TEST(interval_sweep),
+        GY_TEST(ping_pong_mixed),
+        GY_TEST(out_of_order),
+        GY_TEST(dropped_across_refresh),
+        GY_TEST(header_len_combos),
+        GY_TEST(header_ek_scheduling),
+        GY_TEST(missing_ek_rejected),
+        GY_TEST(bad_enc_header_len_rejected),
+        GY_TEST(reserved_flag_rejected),
+        GY_TEST(tamper_matrix),
+        GY_TEST(determinism),
+        GY_TEST(zeroize),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(init_mapping),
-            GY_TEST(ping_pong_interval1),
-            GY_TEST(ping_pong_interval2),
-            GY_TEST(ping_pong_interval20),
-            GY_TEST(ping_pong_interval100),
-            GY_TEST(interval_sweep),
-            GY_TEST(ping_pong_mixed),
-            GY_TEST(out_of_order),
-            GY_TEST(dropped_across_refresh),
-            GY_TEST(header_len_combos),
-            GY_TEST(header_ek_scheduling),
-            GY_TEST(missing_ek_rejected),
-            GY_TEST(bad_enc_header_len_rejected),
-            GY_TEST(reserved_flag_rejected),
-            GY_TEST(tamper_matrix),
-            GY_TEST(determinism),
-            GY_TEST(zeroize),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

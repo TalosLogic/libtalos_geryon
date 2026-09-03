@@ -42,7 +42,8 @@ static const uint8_t KAT_keynonce[44] = {
 };
 #endif
 #if KAT_ENCHEADER_PINNED
-/* 60-byte classical enc_header: HK, salt = 0x77 x16, header 0x40.., aead 0x01. */
+/* 60-byte classical enc_header: HK, salt = 0x77 x16, header 0x40.., aead 0x01.
+ */
 static const uint8_t KAT_encheader[60] = {
     0xaf, 0x1d, 0x21, 0xb8, 0x35, 0x06, 0x24, 0x07, 0xc2, 0x6f, 0xc8, 0x02,
     0xf4, 0xb4, 0xe4, 0x7a, 0x07, 0xa6, 0x65, 0x1c, 0x5a, 0x1c, 0x7b, 0x49,
@@ -378,7 +379,8 @@ TEST(negative_matrix)
                     GY_ERR_VERIFY);
     }
 
-    /* Wrong aead_id (0x03 always available; wrong key/nonce/tag-len -> fail). */
+    /* Wrong aead_id (0x03 always available; wrong key/nonce/tag-len -> fail).
+     */
     EXPECT_FAIL(gy_he_decrypt(D, GY_AEAD_AEGIS256, HK, salt, enc, enclen, ad2,
                               out, sizeof(out), &outlen),
                 GY_ERR_VERIFY);

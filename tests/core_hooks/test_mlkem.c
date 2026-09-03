@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for src/core/mlkem.c (ML-KEM-512, FIPS 203), built with
+ * Tests for src/core/mlkem512.c (ML-KEM-512, FIPS 203), built with
  * -DGY_TEST_HOOKS so the _derand seams and the pqinit RNG hooks are live.
  *
  * Scope (D-PQ-3, amended 2026-08-17): these are WRAPPER-conformance checks, not
@@ -25,7 +25,7 @@
 #include <unistd.h>
 
 #include "error.h"
-#include "mlkem.h"
+#include "mlkem512.h"
 #include "pqinit.h"
 #include "util.h"
 
@@ -41,14 +41,14 @@ TEST(roundtrip_agreement)
     uint8_t pk2[GY_MLKEM512_PK], sk2[GY_MLKEM512_SK];
     uint8_t ss_other[GY_MLKEM512_SS];
 
-    ASSERT_EQ(gy_mlkem_keypair(pk, sk), GY_OK);
-    ASSERT_EQ(gy_mlkem_encaps(ct, ss_enc, pk), GY_OK);
-    ASSERT_EQ(gy_mlkem_decaps(ss_dec, ct, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_encaps(ct, ss_enc, pk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss_dec, ct, sk), GY_OK);
     ASSERT_MEMEQ(ss_enc, ss_dec, GY_MLKEM512_SS);
 
     /* A different secret key decapsulates the same ct to a different secret. */
-    ASSERT_EQ(gy_mlkem_keypair(pk2, sk2), GY_OK);
-    ASSERT_EQ(gy_mlkem_decaps(ss_other, ct, sk2), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk2, sk2), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss_other, ct, sk2), GY_OK);
     ASSERT_TRUE(memcmp(ss_enc, ss_other, GY_MLKEM512_SS) != 0,
                 "wrong sk yields a different shared secret");
 }
@@ -59,13 +59,13 @@ TEST(keypair_invariants)
     uint8_t pk1[GY_MLKEM512_PK], sk1[GY_MLKEM512_SK];
     uint8_t pk2[GY_MLKEM512_PK], sk2[GY_MLKEM512_SK];
 
-    ASSERT_EQ(gy_mlkem_keypair(pk1, sk1), GY_OK);
-    ASSERT_EQ(gy_mlkem_keypair(pk2, sk2), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk1, sk1), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk2, sk2), GY_OK);
     ASSERT_TRUE(memcmp(pk1, pk2, GY_MLKEM512_PK) != 0, "public keys differ");
     ASSERT_TRUE(memcmp(sk1, sk2, GY_MLKEM512_SK) != 0, "secret keys differ");
 
-    ASSERT_EQ(gy_mlkem_keypair(NULL, sk1), GY_ERR_ARG);
-    ASSERT_EQ(gy_mlkem_keypair(pk1, NULL), GY_ERR_ARG);
+    ASSERT_EQ(gy_mlkem512_keypair(NULL, sk1), GY_ERR_ARG);
+    ASSERT_EQ(gy_mlkem512_keypair(pk1, NULL), GY_ERR_ARG);
 }
 
 /*
@@ -84,8 +84,8 @@ TEST(derand_seed_plumbing)
     uint8_t ct_b[GY_MLKEM512_CT], ss_b[GY_MLKEM512_SS];
 
     memset(seed, 0x42, sizeof(seed));
-    ASSERT_EQ(gy_mlkem_keypair_derand(pk_a, sk_a, seed), GY_OK);
-    ASSERT_EQ(gy_mlkem_keypair_derand(pk_b, sk_b, seed), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair_derand(pk_a, sk_a, seed), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair_derand(pk_b, sk_b, seed), GY_OK);
     ASSERT_MEMEQ(pk_a, pk_b, GY_MLKEM512_PK);
     ASSERT_MEMEQ(sk_a, sk_b, GY_MLKEM512_SK);
 
@@ -96,18 +96,18 @@ TEST(derand_seed_plumbing)
      * d/z split is pinned by kat_keygen.
      */
     seed[0] ^= 0x01;
-    ASSERT_EQ(gy_mlkem_keypair_derand(pk_b, sk_b, seed), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair_derand(pk_b, sk_b, seed), GY_OK);
     ASSERT_TRUE(memcmp(pk_a, pk_b, GY_MLKEM512_PK) != 0,
                 "a one-bit change in d changes the public key");
 
     memset(m, 0x24, sizeof(m));
-    ASSERT_EQ(gy_mlkem_encaps_derand(ct_a, ss_a, pk_a, m), GY_OK);
-    ASSERT_EQ(gy_mlkem_encaps_derand(ct_b, ss_b, pk_a, m), GY_OK);
+    ASSERT_EQ(gy_mlkem512_encaps_derand(ct_a, ss_a, pk_a, m), GY_OK);
+    ASSERT_EQ(gy_mlkem512_encaps_derand(ct_b, ss_b, pk_a, m), GY_OK);
     ASSERT_MEMEQ(ct_a, ct_b, GY_MLKEM512_CT);
     ASSERT_MEMEQ(ss_a, ss_b, GY_MLKEM512_SS);
 
     /* The derand ct/ss still round-trips through production decaps. */
-    ASSERT_EQ(gy_mlkem_decaps(ss_b, ct_a, sk_a), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss_b, ct_a, sk_a), GY_OK);
     ASSERT_MEMEQ(ss_a, ss_b, GY_MLKEM512_SS);
 }
 
@@ -124,13 +124,13 @@ TEST(implicit_rejection)
     uint8_t ss_honest[GY_MLKEM512_SS];
     uint8_t ss_rej1[GY_MLKEM512_SS], ss_rej2[GY_MLKEM512_SS];
 
-    ASSERT_EQ(gy_mlkem_keypair(pk, sk), GY_OK);
-    ASSERT_EQ(gy_mlkem_encaps(ct, ss_honest, pk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_encaps(ct, ss_honest, pk), GY_OK);
 
     ct[0] ^= 0x01; /* corrupt one byte */
 
-    ASSERT_EQ(gy_mlkem_decaps(ss_rej1, ct, sk), GY_OK);
-    ASSERT_EQ(gy_mlkem_decaps(ss_rej2, ct, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss_rej1, ct, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss_rej2, ct, sk), GY_OK);
     ASSERT_TRUE(memcmp(ss_rej1, ss_honest, GY_MLKEM512_SS) != 0,
                 "implicit rejection secret differs from the honest secret");
     ASSERT_MEMEQ(ss_rej1, ss_rej2, GY_MLKEM512_SS); /* deterministic */
@@ -146,7 +146,7 @@ TEST(rng_draws_through_shim)
     uint8_t pk[GY_MLKEM512_PK], sk[GY_MLKEM512_SK];
 
     gy_pq_rng_reset_draw_count();
-    ASSERT_EQ(gy_mlkem_keypair(pk, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair(pk, sk), GY_OK);
     ASSERT_TRUE(gy_pq_rng_draw_count() > 0,
                 "keypair drew random bytes through the shim");
 }
@@ -167,7 +167,7 @@ TEST(rng_failure_aborts)
         uint8_t pk[GY_MLKEM512_PK], sk[GY_MLKEM512_SK];
 
         gy_pq_rng_set_force_fail(1);
-        (void)gy_mlkem_keypair(pk, sk); /* must not return */
+        (void)gy_mlkem512_keypair(pk, sk); /* must not return */
         _exit(0); /* reached only if it wrongly returned */
     }
     ASSERT_TRUE(waitpid(pid, &status, 0) == pid, "child reaped");
@@ -176,7 +176,7 @@ TEST(rng_failure_aborts)
 }
 
 /*
- * Known-answer tests binding gy_mlkem_* to FIPS 203, independent of liboqs
+ * Known-answer tests binding gy_mlkem512_* to FIPS 203, independent of liboqs
  * (mlkem512_kat.h, from the NIST ACVP FIPS 203 vectors).  A known ML-KEM-512
  * answer fails if the wrapper is ever wired to a different parameter set or
  * backing library that diverges from the standard - the same role the RFC 7748
@@ -198,7 +198,7 @@ TEST(kat_keygen)
     kat_hex(seed, sizeof(seed), GY_KAT_KG_SEED);
     kat_hex(want_pk, sizeof(want_pk), GY_KAT_KG_EK);
     kat_hex(want_sk, sizeof(want_sk), GY_KAT_KG_DK);
-    ASSERT_EQ(gy_mlkem_keypair_derand(pk, sk, seed), GY_OK);
+    ASSERT_EQ(gy_mlkem512_keypair_derand(pk, sk, seed), GY_OK);
     ASSERT_MEMEQ(pk, want_pk, GY_MLKEM512_PK);
     ASSERT_MEMEQ(sk, want_sk, GY_MLKEM512_SK);
 }
@@ -213,7 +213,7 @@ TEST(kat_encaps)
     kat_hex(m, sizeof(m), GY_KAT_ENC_M);
     kat_hex(want_ct, sizeof(want_ct), GY_KAT_ENC_C);
     kat_hex(want_ss, sizeof(want_ss), GY_KAT_ENC_K);
-    ASSERT_EQ(gy_mlkem_encaps_derand(ct, ss, pk, m), GY_OK);
+    ASSERT_EQ(gy_mlkem512_encaps_derand(ct, ss, pk, m), GY_OK);
     ASSERT_MEMEQ(ct, want_ct, GY_MLKEM512_CT);
     ASSERT_MEMEQ(ss, want_ss, GY_MLKEM512_SS);
 }
@@ -226,7 +226,7 @@ TEST(kat_decaps_valid)
     kat_hex(sk, sizeof(sk), GY_KAT_DEC_DK);
     kat_hex(ct, sizeof(ct), GY_KAT_DEC_C);
     kat_hex(want_ss, sizeof(want_ss), GY_KAT_DEC_K);
-    ASSERT_EQ(gy_mlkem_decaps(ss, ct, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss, ct, sk), GY_OK);
     ASSERT_MEMEQ(ss, want_ss, GY_MLKEM512_SS);
 }
 
@@ -244,7 +244,7 @@ TEST(kat_decaps_implicit_reject)
     kat_hex(sk, sizeof(sk), GY_KAT_REJ_DK);
     kat_hex(ct, sizeof(ct), GY_KAT_REJ_C);
     kat_hex(want_ss, sizeof(want_ss), GY_KAT_REJ_K);
-    ASSERT_EQ(gy_mlkem_decaps(ss, ct, sk), GY_OK);
+    ASSERT_EQ(gy_mlkem512_decaps(ss, ct, sk), GY_OK);
     ASSERT_MEMEQ(ss, want_ss, GY_MLKEM512_SS);
 }
 

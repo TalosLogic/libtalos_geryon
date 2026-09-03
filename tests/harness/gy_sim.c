@@ -99,7 +99,8 @@ gy_sim_start(struct gy_sim_initiator *init, const struct gy_sim *sim,
     return GY_OK;
 }
 
-/* Delete the OPK matching pkid from the stock (delete-on-success, D-X3DH-10). */
+/* Delete the OPK matching pkid from the stock (delete-on-success, D-X3DH-10).
+ */
 static void
 opk_delete(struct gy_sim *sim, uint32_t pkid)
 {

@@ -33,9 +33,10 @@ gy_recv_ctx_init(struct gy_recv_ctx *c, const struct gy_store *store,
 {
     if (c == NULL || store == NULL || desc == NULL)
         return GY_ERR_ARG;
-    /* local_ik/spks may be NULL for a hybrid-suite context: the hybrid responder
-     * material is passed per-call to gy_hybrid_recv, and the steady-state DR
-     * path uses no responder identity (it dispatches on the session suite). */
+    /* local_ik/spks may be NULL for a hybrid-suite context: the hybrid
+     * responder material is passed per-call to gy_hybrid_recv, and the
+     * steady-state DR path uses no responder identity (it dispatches on the
+     * session suite). */
     if ((spks == NULL) != (n_spks == 0))
         return GY_ERR_ARG;
     if (opks == NULL && n_opks != 0)
@@ -62,7 +63,8 @@ recv_now(struct gy_recv_ctx *c)
     return c->clock != NULL ? c->clock(c->clock_ctx) : 0;
 }
 
-/* Position of a SessionID in a DeviceRecord: 0 active, 1 inactive, -1 absent. */
+/* Position of a SessionID in a DeviceRecord: 0 active, 1 inactive, -1 absent.
+ */
 static int
 session_position(const struct gy_device_record *d,
                  const uint8_t id[GY_SESSION_ID_LEN])
@@ -201,7 +203,8 @@ recv_dr(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
 
 /* ---- initiation path (D-SES-6.1 / D-X3DH-10) --------------------------- */
 
-/* Parse IK_A / EK_A public keys from the carried prefix of an initial message. */
+/* Parse IK_A / EK_A public keys from the carried prefix of an initial message.
+ */
 static void
 parse_base_keys(const struct gy_suite_desc *desc, const uint8_t *inner,
                 struct gy_public_key *ika, struct gy_public_key *ekb)
@@ -272,7 +275,8 @@ recv_init(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
     }
     gy_device_record_free(&dev);
 
-    /* Fresh base: record the sender identity (TOFU / key-change fail-closed). */
+    /* Fresh base: record the sender identity (TOFU / key-change fail-closed).
+     */
     rc = gy_conditional_update(&c->op, desc->suite_id, user_id, user_id_len,
                                device_id, device_id_len, &ika, NULL);
     if (rc != GY_OK)
@@ -469,7 +473,8 @@ hybrid_recv_init(struct gy_recv_ctx *b,
     int found, owned, rc;
 
     if (inner_len <= prefix_len)
-        return GY_ERR_VERIFY; /* need a non-empty first frame after the prefix */
+        return GY_ERR_VERIFY; /* need a non-empty first frame after the prefix
+                               */
     frame_len = inner_len - prefix_len;
 
     /* SessionID from the carried base key (IK_A, EK_A curve components). */

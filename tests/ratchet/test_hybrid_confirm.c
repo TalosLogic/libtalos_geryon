@@ -8,6 +8,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "hybrid_double_ratchet.h"
@@ -17,6 +18,11 @@
 static const struct gy_suite_desc *D;
 #define AEAD GY_AEAD_CHACHA20POLY1305
 static const uint8_t AD[2] = {0x5A, 0xA5};
+
+/* A wire buffer sized for the worst-case hybrid frame at any tier (the
+ * h448_1024 ek+confirm header is ~4.8 KB), plus slack for the tiny test
+ * payloads. */
+#define WIREBUF (GY_DR_HYBRID_HDR_WIRE_MAX + 256)
 
 static void
 make_secrets(struct gy_dr_secrets *s)
@@ -84,18 +90,20 @@ dec_ok(struct gy_hybrid_dr_state *to, const uint8_t *wire, size_t wl,
     ASSERT_MEMEQ(out, pt, strlen(pt));
 }
 
-/* CLASSICAL_ONLY -> CONFIRM_SENT -> PQ_CONFIRMED (Bob) / -> CONFIRMED (Alice). */
+/* CLASSICAL_ONLY -> CONFIRM_SENT -> PQ_CONFIRMED (Bob) / -> CONFIRMED (Alice).
+ */
 TEST(state_machine)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w[4096];
+    uint8_t w[WIREBUF];
     size_t wl;
 
     gen_session(&alice, &bob, 1, NULL);
     ASSERT_EQ(gy_hybrid_dr_pq_state(&bob), GY_HYBRID_PQ_CLASSICAL_ONLY);
     ASSERT_EQ(gy_hybrid_dr_pq_state(&alice), GY_HYBRID_PQ_CLASSICAL_ONLY);
 
-    /* Alice's first message: Bob ratchets and sends confirmation -> CONFIRM_SENT. */
+    /* Alice's first message: Bob ratchets and sends confirmation ->
+     * CONFIRM_SENT. */
     wl = enc(&alice, w, sizeof(w), "a0");
     dec_ok(&bob, w, wl, "a0");
     ASSERT_EQ(gy_hybrid_dr_pq_state(&bob), GY_HYBRID_PQ_CONFIRM_SENT);
@@ -122,7 +130,7 @@ TEST(state_machine)
 TEST(loss_tolerance)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w0[4096], w1[4096], w2[4096];
+    uint8_t w0[WIREBUF], w1[WIREBUF], w2[WIREBUF];
     size_t l0, l1, l2;
 
     gen_session(&alice, &bob, 5, NULL);
@@ -133,7 +141,8 @@ TEST(loss_tolerance)
     l1 = enc(&bob, w1, sizeof(w1), "b1");
     l2 = enc(&bob, w2, sizeof(w2), "b2");
 
-    /* Drop b0, b1; Alice completes confirmation from b2 and recovers the rest. */
+    /* Drop b0, b1; Alice completes confirmation from b2 and recovers the rest.
+     */
     dec_ok(&alice, w2, l2, "b2");
     ASSERT_EQ(gy_hybrid_dr_pq_state(&alice), GY_HYBRID_PQ_CONFIRMED);
     dec_ok(&alice, w0, l0, "b0");
@@ -147,7 +156,7 @@ TEST(loss_tolerance)
 TEST(bit9_from_initiator_rejected)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w[4096], out[256];
+    uint8_t w[WIREBUF], out[256];
     size_t wl, ol;
 
     gen_session(&alice, &bob, 1, NULL);
@@ -169,11 +178,12 @@ TEST(bit9_from_initiator_rejected)
     gy_hybrid_dr_free(&bob);
 }
 
-/* Bit 9 on a later responder chain (not the first) is rejected by the initiator. */
+/* Bit 9 on a later responder chain (not the first) is rejected by the
+ * initiator. */
 TEST(bit9_on_later_chain_rejected)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w[4096], out[256];
+    uint8_t w[WIREBUF], out[256];
     size_t wl, ol;
 
     gen_session(&alice, &bob, 1, NULL);
@@ -183,7 +193,8 @@ TEST(bit9_on_later_chain_rejected)
            "b0"); /* Alice CONFIRMED */
     dec_ok(&bob, w, enc(&alice, w, sizeof(w), "a1"), "a1"); /* Bob CONFIRMED */
 
-    /* Bob's next chain must NOT carry confirmation; force it and expect reject. */
+    /* Bob's next chain must NOT carry confirmation; force it and expect reject.
+     */
     bob.send_confirm_pending = 1;
     memset(bob.confirm_ct, 0x33, D->kem_ct_len);
     wl = enc(&bob, w, sizeof(w), "b1");
@@ -224,7 +235,7 @@ TEST(replay_undecryptable)
 {
     struct gy_hybrid_dr_state alice, bob;
     uint8_t wrong_ek[GY_KEM_EK_MAX], wrong_dk[GY_KEM_DK_MAX];
-    uint8_t w[4096], out[256];
+    uint8_t w[WIREBUF], out[256];
     size_t wl, ol;
 
     /* Alice holds a dk that does NOT match the ek Bob confirms to. */
@@ -244,11 +255,12 @@ TEST(replay_undecryptable)
     gy_hybrid_dr_free(&bob);
 }
 
-/* PQ_CONFIRMED requires a VERIFIED post-confirmation message (no advance on tamper). */
+/* PQ_CONFIRMED requires a VERIFIED post-confirmation message (no advance on
+ * tamper). */
 TEST(confirmed_requires_verified)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w[4096], bad[4096], out[256];
+    uint8_t w[WIREBUF], bad[WIREBUF], out[256];
     size_t wl, ol;
 
     gen_session(&alice, &bob, 1, NULL);
@@ -277,7 +289,7 @@ TEST(confirmed_requires_verified)
 TEST(confirm_material_zeroized)
 {
     struct gy_hybrid_dr_state alice, bob;
-    uint8_t w[4096];
+    uint8_t w[WIREBUF];
 
     gen_session(&alice, &bob, 1, NULL);
     dec_ok(&bob, w, enc(&alice, w, sizeof(w), "a0"), "a0");
@@ -293,23 +305,29 @@ TEST(confirm_material_zeroized)
 int
 main(void)
 {
+    /* The whole file is descriptor-generic; run it for each hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(state_machine),
+        GY_TEST(loss_tolerance),
+        GY_TEST(bit9_from_initiator_rejected),
+        GY_TEST(bit9_on_later_chain_rejected),
+        GY_TEST(truncated_confirm_rejected),
+        GY_TEST(replay_undecryptable),
+        GY_TEST(confirmed_requires_verified),
+        GY_TEST(confirm_material_zeroized),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(state_machine),
-            GY_TEST(loss_tolerance),
-            GY_TEST(bit9_from_initiator_rejected),
-            GY_TEST(bit9_on_later_chain_rejected),
-            GY_TEST(truncated_confirm_rejected),
-            GY_TEST(replay_undecryptable),
-            GY_TEST(confirmed_requires_verified),
-            GY_TEST(confirm_material_zeroized),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

@@ -440,13 +440,13 @@ TEST(reentrancy_guard_is_armed_during_store_identity_callback)
 }
 
 /* The idmat persist-failure path.  When the app store's
- * store_identity callback fails while the freshly generated identity material is
- * being sealed and persisted, create must surface the error, leave no
- * half-written identity blob behind, and release its slot so a subsequent create
- * on the same store succeeds.  The plaintext idmat is wiped regardless: it lives
- * in a gy_guarded_alloc that cust_seal_and_persist_idmat frees (zeroizing) before
- * the persist call, on every path (source-audited for the classical and hybrid
- * seal-and-persist helpers alike). */
+ * store_identity callback fails while the freshly generated identity material
+ * is being sealed and persisted, create must surface the error, leave no
+ * half-written identity blob behind, and release its slot so a subsequent
+ * create on the same store succeeds.  The plaintext idmat is wiped regardless:
+ * it lives in a gy_guarded_alloc that cust_seal_and_persist_idmat frees
+ * (zeroizing) before the persist call, on every path (source-audited for the
+ * classical and hybrid seal-and-persist helpers alike). */
 TEST(persist_failure_surfaces_and_leaves_no_blob)
 {
     static struct mstore m;

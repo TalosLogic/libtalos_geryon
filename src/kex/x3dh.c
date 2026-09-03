@@ -131,7 +131,8 @@ parse_pubkey(struct gy_public_key *k, const uint8_t *in, size_t pk_len)
     memcpy(k->pk, in + 5, pk_len);
 }
 
-/* Recompute the PKID over EncodeEC(k) and confirm it matches the carried one. */
+/* Recompute the PKID over EncodeEC(k) and confirm it matches the carried one.
+ */
 static int
 pkid_matches(const struct gy_suite_desc *desc, const struct gy_public_key *k)
 {
@@ -201,7 +202,8 @@ gy_x3dh_initiate(const struct gy_suite_desc *desc,
     if (rc != GY_OK)
         goto out;
 
-    /* Prefix: version || suite || ik || ek || ik_id || spk_id || opk_id || 0. */
+    /* Prefix: version || suite || ik || ek || ik_id || spk_id || opk_id || 0.
+     */
     kw = 4 + 1 + desc->curve_pk_len;
     o = 0;
     out_prefix[o++] = GY_WIRE_VERSION;

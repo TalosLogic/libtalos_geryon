@@ -11,6 +11,15 @@ Every item of the §11.3 negative list, verbatim, mapped to the named test(s)
 that implement it.  These are cross-referenced here, not duplicated.  `file::TEST`
 names the `TEST(...)` case.
 
+Both hybrid tiers: every hybrid test cited in the §11.3 and §11.4 tables runs
+under BOTH geryon_h25519_512 and geryon_h448_1024.  Each `main()` loops the two
+hybrid suite ids and re-runs its whole case list under a file-global descriptor
+(D-GEN-7 suite genericity; the per-suite banner is printed as `== suite ... ==`),
+so a single row's tests cover both tiers rather than needing a second file.  The
+sole tier-specific assertions are wire-size KATs, branched per tier in place
+(e.g. the initiator-prefix length 4508 vs 9004, the encoded-key sizes, and the
+§7.6 header lengths).
+
 | # | §11.3 negative item | Named test(s) |
 |---|---------------------|---------------|
 | 1 | Tampered signatures, each scheme separately (verify the diagnostic codes) | `kex/test_hybrid_prekeys.c::dual_signature_matrix` (GY_DIAG_CLASSICAL/PQ/BOTH_FAILED) |
@@ -19,7 +28,7 @@ names the `TEST(...)` case.
 | 4 | Interval outside signed bounds | `kex/test_hybrid_x3dh.c::bad_hybrid_flag_initiate` (interval 50 > advertised max 20); `kex/test_hybrid_prekeys.c::flags_matrix` |
 | 5 | aead_id outside the responder's advertised set | `kex/test_hybrid_x3dh.c::bad_hybrid_flag_initiate` (aead_id 4 undefined; aead_id 2 defined-but-unadvertised) |
 | 6 | Reserved bits set | `kex/test_hybrid_x3dh.c::bad_hybrid_flag_initiate`, `::tamper_matrix` (hybrid_flag reserved bit); `ratchet/test_hybrid_double_ratchet.c::reserved_flag_rejected` |
-| 7 | Cross-suite initial messages | `proto/test_envelope.c::envelope_negatives` (wrong suite -> GY_ERR_STATE); `session/test_records.c::sessionid_cross_suite_rejected` |
+| 7 | Cross-suite initial messages | Full 4x4 of {c25519, h25519_512, c448, h448_1024}, incl. classical<->hybrid both ways: `api/test_suite_matrix.c::cross_suite_matrix` (each suite's bundle and initial message presented to every other suite via `gy_initiate`/`gy_receive`, rejected before any cryptographic processing: structural `GY_ERR_STATE`/`GY_ERR_ARG` on the send/initiate path, the uniform `GY_ERR_VERIFY` (D-SES-6.2) on the oracle-sensitive receive path) at the public API; `proto/test_cross_suite_seam.c::cross_suite_seam` (`gy_frame_check`, `gy_bundle_parse`/`gy_hybrid_bundle_parse` -> `GY_ERR_STATE` at the suite_id gate) at the parse seam. Same-suite reject also in `proto/test_envelope.c::envelope_negatives` (looped {c25519, c448}); `session/test_records.c::sessionid_cross_suite_rejected` |
 | 8 | Cross-version initial messages | `proto/test_envelope.c::envelope_negatives` (bad outer version; inner/outer version mismatch) |
 | 9 | confirm_ct outside the responder's first chain | `ratchet/test_hybrid_confirm.c::bit9_from_initiator_rejected`, `::bit9_on_later_chain_rejected`, `::truncated_confirm_rejected` |
 | 10 | Replayed initial message: base-key dedupe (no new session; replayed first message undecryptable) | `session/test_recv.c::dedupe_resend`; `api/test_scenarios.c::replay_rejected`; `ratchet/test_hybrid_confirm.c::replay_undecryptable` |
@@ -72,7 +81,7 @@ files; the few tier-specific tests are named explicitly.  `file::TEST` names the
 | 3 | Invalid/low-order 448 point at ingress: initial message / core | `core/test_x448.c::low_order_rejected`; `ratchet/test_zeroize.c::x3dh_initiate_deletes_ek_on_failure` (all-zero point, failure-path EK deletion) |
 | 4 | All-zero DH rejection (D-X3DH-8 at 448) | `kex/test_x3dh_c448.c::small_order_responder`, `::small_order_initiator` (`GY_ERR_WEAK_KEY` before session establishment) |
 | 5 | Tampered header/ciphertext, complete-state no-op | `ratchet/test_he_props.c::dr_frame_tamper_matrix`; `ratchet/test_skipped.c::forged_message_is_noop`; `session/test_recv.c::uniform_failure` (looped under c448) |
-| 6 | Cross-suite / cross-version initial message | `kex/test_x3dh_c448.c::cross_suite_rejected` (suite byte flipped -> `GY_ERR_STATE` before DH), `::parse_negatives` (bad version -> `GY_ERR_ARG`); `proto/test_envelope.c::envelope_negatives` (looped) |
+| 6 | Cross-suite / cross-version initial message | `kex/test_x3dh_c448.c::cross_suite_rejected` (suite byte flipped -> `GY_ERR_STATE` before DH), `::parse_negatives` (bad version -> `GY_ERR_ARG`); `proto/test_envelope.c::envelope_negatives` (looped); c448 as one row of the full 4x4 in `api/test_suite_matrix.c::cross_suite_matrix` and `proto/test_cross_suite_seam.c::cross_suite_seam` (c448 bundle/message to every other suite and back) |
 
 ### c448 property tests
 

@@ -331,11 +331,11 @@ main(void)
 {
     /*
      * The gy_sim conversation/property cases are descriptor-driven
-     * and run under both classical suites.  The three cases keyed on c25519 wire
-     * offsets (OFF_IK_ID / OFF_SPK_ID depend on curve_pk_len) or that use c448 as
-     * the "other" suite (dr_message_tamper_noop, cross_version_suite) run under
-     * c25519 only; the c448-tier initial-message negative matrix and cross-suite
-     * rejection are covered at c448 by test_x3dh_c448 and the
+     * and run under both classical suites.  The three cases keyed on c25519
+     * wire offsets (OFF_IK_ID / OFF_SPK_ID depend on curve_pk_len) or that use
+     * c448 as the "other" suite (dr_message_tamper_noop, cross_version_suite)
+     * run under c25519 only; the c448-tier initial-message negative matrix and
+     * cross-suite rejection are covered at c448 by test_x3dh_c448 and the
      * consolidated 448 negative matrix.
      */
     static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};

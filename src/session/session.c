@@ -273,7 +273,8 @@ hybrid_pq_decode(struct rcur *r, struct gy_hybrid_dr_state *rt,
     rt->have_id_dk = r_u8(r);
 }
 
-/* Decode into a caller-zeroized ratchet; validates every count/index in range. */
+/* Decode into a caller-zeroized ratchet; validates every count/index in range.
+ */
 static void
 dr_decode(struct rcur *r, struct gy_hybrid_dr_state *rt,
           const struct gy_suite_desc *d)
@@ -351,6 +352,38 @@ dr_decode(struct rcur *r, struct gy_hybrid_dr_state *rt,
 }
 
 /* ---- SessionRecord ----------------------------------------------------- */
+
+/*
+ * GY_SESSION_BLOB_MAX must cover the largest blob gy_session_encode can
+ * produce. The worst case is the widest hybrid tier (h448_1024) at full
+ * skip-store occupancy: GY_MAX_SKIP entries AND GY_MAX_SKIP live epoch slots at
+ * once (each of GY_MAX_SKIP entries in a distinct epoch), all lengths at their
+ * maxima.  The skip store dominates and is tier-independent (32-byte mk/hk);
+ * the hybrid PQ block is the only tier-varying term.  This mirrors, byte for
+ * byte, the writes in gy_session_encode -> dr_encode -> hybrid_pq_encode, so a
+ * future size or GY_MAX_SKIP change fails the build here instead of silently
+ * truncating a session that can no longer be persisted.  Currently 106000 >=
+ * 102864.
+ */
+_Static_assert(
+    GY_SESSION_BLOB_MAX >=
+        /* session header (fmt, reserved, suite, base_len, base, id, 3x be64,
+           2x be32, pq_pending, ad_len, ad) */
+        (1 + 1 + 1 + 1 + GY_HASH_MAX + GY_SESSION_ID_LEN + 3 * 8 + 2 * 4 + 1 +
+         1 + GY_SESSION_AD_MAX) +
+            /* DR base (aead_id, pkid, curve_type, pub.pk, sk, have_dhr, dhr,
+           7x chain/header key, ns/nr/pn, 6x have_ flags) */
+            (1 + 4 + 1 + GY_CURVE_PK_MAX + GY_CURVE_SK_MAX + 1 +
+             GY_CURVE_PK_MAX + 7 * GY_DR_KEY_LEN + 3 * 4 + 6) +
+            /* skip store: recv_count, count, GY_MAX_SKIP entries (epoch, n,
+           age, mk), live, GY_MAX_SKIP live epochs (slot, refs, hk) */
+            (8 + 4 + GY_MAX_SKIP * (4 + 4 + 8 + GY_DR_KEY_LEN) + 4 +
+             GY_MAX_SKIP * (4 + 4 + GY_DR_KEY_LEN)) +
+            /* widest hybrid PQ block: 3x ek + 2x dk + 2x ct, counter, interval,
+           9x flags */
+            (3 * GY_KEM_EK_MAX + 2 * GY_KEM_DK_MAX + 2 * GY_KEM_CT_MAX + 4 + 4 +
+             9),
+    "GY_SESSION_BLOB_MAX covers the worst-case encoded session record");
 
 int
 gy_session_encode(uint8_t *out, size_t cap, size_t *outlen,
@@ -596,8 +629,8 @@ gy_device_record_init(struct gy_device_record *d, uint8_t suite_id,
 /*
  * DeviceRecord body (everything after the format/suite prefix), shared by the
  * classical and hybrid encoders so the hybrid record reuses the base layout and
- * only appends its PQ identity keys.  Range violations set the cursor's ok flag,
- * caught by the terminal check in each public decoder.
+ * only appends its PQ identity keys.  Range violations set the cursor's ok
+ * flag, caught by the terminal check in each public decoder.
  */
 static void
 devrec_body_encode(struct wcur *w, const struct gy_device_record *d,

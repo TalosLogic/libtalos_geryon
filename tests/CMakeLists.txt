@@ -382,3 +382,17 @@ add_test(NAME nm_scope_448
         "$<TARGET_FILE:geryon_session>"
         "$<TARGET_FILE:geryon_proto>")
 set_tests_properties(nm_scope_448 PROPERTIES LABELS "audit")
+
+# Dependency-surface audit: geryon's own archives reference no C++
+# runtime and no OpenSSL, and a fully linked binary pulls no forbidden shared
+# object. Build-artifact based; test_api links the whole stack (all layers +
+# sodium + liboqs + libdecaf + monocypher) so its ldd is the runtime link set.
+add_test(NAME dependency_surface
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/audit/dependency_surface.sh"
+        "$<TARGET_FILE:geryon_core>"
+        "$<TARGET_FILE:geryon_kex>"
+        "$<TARGET_FILE:geryon_ratchet>"
+        "$<TARGET_FILE:geryon_session>"
+        "$<TARGET_FILE:geryon_proto>"
+        "$<TARGET_FILE:test_api>")
+set_tests_properties(dependency_surface PROPERTIES LABELS "audit")

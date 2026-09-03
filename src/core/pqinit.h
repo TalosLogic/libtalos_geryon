@@ -12,8 +12,9 @@
  * liboqs's random-byte source at geryon's one getrandom-backed RNG
  * (gy_random_bytes, D-XED-1).  There is no per-context liboqs state:
  * OQS_randombytes_custom_algorithm sets a PROCESS-GLOBAL function pointer, so
- * registration is idempotent and benign under the D-GEN-8 one-context-per-thread
- * contract (the shim routes to libsodium, which is thread-safe).
+ * registration is idempotent and benign under the D-GEN-8
+ * one-context-per-thread contract (the shim routes to libsodium, which is
+ * thread-safe).
  *
  * The registered shim ABORTS on RNG failure: the liboqs callback returns void,
  * so a failing generator cannot be signalled and liboqs would otherwise key or
@@ -30,7 +31,7 @@ int gy_pq_init(void);
 /*
  * Test-only seams into the liboqs RNG shim (D-PQ-2 / D-PQ-3), compiled only
  * under GY_TEST_HOOKS.  Two purposes:
- *   - draw counting: proves a PQ primitive (e.g. gy_mlkem_keypair) actually
+ *   - draw counting: proves a PQ primitive (e.g. gy_mlkem512_keypair) actually
  *     draws through geryon's registered shim rather than some bypass path, on
  *     both the DIST and pure-C backends;
  *   - fault injection: forces the shim's failure branch so the death test can

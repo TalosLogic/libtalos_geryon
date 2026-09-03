@@ -22,8 +22,8 @@
  * PQ-first combiner hdh = HASH(kem_ss || dh) (section 3.1); the sender's ML-KEM
  * ratchet keypair is refreshed every mlkem_interval steps and, when refreshed,
  * rides every header of the ensuing sending chain.  The KEM confirmation and
- * PQ-pending state (section 8) are wired in a later ticket; a CONFIRM_CT_PRESENT
- * header is rejected here.
+ * PQ-pending state (section 8) are wired in a later ticket; a
+ * CONFIRM_CT_PRESENT header is rejected here.
  */
 
 /*
@@ -173,10 +173,10 @@ void gy_hybrid_dr_free(struct gy_hybrid_dr_state *st);
 #ifdef GY_TEST_HOOKS
 /*
  * Test seams for the ML-KEM ratchet (D-PQ-3): when set, the hybrid engine calls
- * these instead of desc->kem_keypair / desc->kem_encap, so a determinism KAT can
- * pin every wire byte of the ML-KEM ratchet.  The curve ratchet keypair uses the
- * classical gy_dr_test_keypair seam (double_ratchet.h).  Set to NULL to restore
- * production behavior.
+ * these instead of desc->kem_keypair / desc->kem_encap, so a determinism KAT
+ * can pin every wire byte of the ML-KEM ratchet.  The curve ratchet keypair
+ * uses the classical gy_dr_test_keypair seam (double_ratchet.h).  Set to NULL
+ * to restore production behavior.
  */
 extern int (*gy_hybrid_dr_test_kem_keypair)(const struct gy_suite_desc *desc,
                                             uint8_t *ek, uint8_t *dk);

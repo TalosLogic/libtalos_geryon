@@ -3,22 +3,28 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Spec-derived hybrid Double Ratchet self-KATs (D-GEN-6, HYBRID_SPEC §11.2):
- * a seeded reference conversation whose every randomness seam is fixed, emitting
- * a deterministic sequence of hybrid frames that are pinned in
+ * a seeded reference conversation whose every randomness seam is fixed,
+ * emitting a deterministic sequence of hybrid frames that are pinned in
  * tests/vectors/dr_hybrid_self.vec.  Covers three ratchet steps each direction
  * including an ML-KEM refresh boundary and the KEM confirmation chain (Bob's
- * first reply), plus skipped-message recovery (a later frame decrypts first, the
- * skipped one recovers from the stored message key).
+ * first reply), plus skipped-message recovery (a later frame decrypts first,
+ * the skipped one recovers from the stored message key).
  *
  * This is the hybrid analogue of the classical dr_he_self.vec KAT
- * (tests/ratchet/test_he_vectors.c).  Determinism comes the same way: the curve
+ * (tests/ratchet/test_he_vectors.c) and, like it, runs once per tier: the
+ * h25519_512 conversation pins tests/vectors/dr_hybrid_self.vec and the
+ * h448_1024 one pins tests/vectors/dr_hybrid_448_self.vec (a distinct seeded
+ * conversation per hybrid suite).  Determinism comes the same way: the curve
  * ratchet keypair and header salt are fixed via the existing ratchet seams, and
  * the two ML-KEM randomness sources (keygen, encaps) are fixed via the FIPS 203
- * _derand entry points (gy_mlkem_*_derand) with fixed seeds - the standard,
- * seed-driven, portable analogue of X25519(fixed_scalar).  Because decapsulation
- * is unseamed (the receiver runs the real path), the derand material is not just
- * deterministic but VALID, so every frame round-trips through the confirmation.
- * No liboqs-internal behavior is frozen: derand outputs are standard-fixed.
+ * _derand entry points (gy_mlkem512_*_derand at the 25519 tier, gy_mlkem1024_*
+ * at the 448 tier, dispatched by curve) with fixed seeds - the standard,
+ * seed-driven, portable analogue of X25519(fixed_scalar).  The seam seeds are
+ * tier-independent (FIPS 203 fixes 64-byte d||z and 32-byte m for every param
+ * set).  Because decapsulation is unseamed (the receiver runs the real path),
+ * the derand material is not just deterministic but VALID, so every frame
+ * round-trips through the confirmation.  No liboqs-internal behavior is frozen:
+ * derand outputs are standard-fixed.
  *
  * This test needs core GY_TEST_HOOKS seams (the _derand entry points), so it is
  * built by the ratchet_hooks harness, which recompiles core+kex+ratchet with
@@ -35,20 +41,68 @@
 #include <string.h>
 
 #include "hybrid_double_ratchet.h"
-#include "mlkem.h"
+#include "mlkem1024.h"
+#include "mlkem512.h"
 
 #include "gy_test.h"
 
-#define VEC_PATH GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_hybrid_self.vec"
+#define VEC_PATH_25519                                                         \
+    GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_hybrid_self.vec"
+#define VEC_PATH_448                                                           \
+    GERYON_TEST_SOURCE_DIR "/tests/vectors/dr_hybrid_448_self.vec"
 #define AEAD GY_AEAD_CHACHA20POLY1305
 #define INTERVAL                                                               \
     2 /* small ML-KEM refresh interval so a boundary is exercised */
 
 #define MAXREC 16
-#define RECBUF 4096
+/* Holds a worst-case hybrid frame at either tier; the h448_1024 header wire
+ * alone is ~4.8 KB, so size off the wire maximum rather than a literal. */
+#define RECBUF (GY_DR_HYBRID_HDR_WIRE_MAX + 512)
+
+/* FIPS 203 fixes the derand seam seeds across every param set (64-byte d||z,
+ * 32-byte m), so one buffer size serves both hybrid tiers. */
+_Static_assert(GY_MLKEM512_KEYPAIR_SEED == GY_MLKEM1024_KEYPAIR_SEED,
+               "keypair seed length is tier-independent");
+_Static_assert(GY_MLKEM512_ENCAPS_SEED == GY_MLKEM1024_ENCAPS_SEED,
+               "encaps seed length is tier-independent");
+#define KEM_KP_SEED GY_MLKEM512_KEYPAIR_SEED
+#define KEM_ENC_SEED GY_MLKEM512_ENCAPS_SEED
 
 static const struct gy_suite_desc *D;
-static const uint8_t BASE[32] = {9}; /* X25519 base point */
+
+/* The suite's vector file (a distinct seeded conversation per hybrid tier). */
+static const char *
+vecpath(void)
+{
+    return (D->curve_type == GY_CURVE_TYPE_448) ? VEC_PATH_448 : VEC_PATH_25519;
+}
+
+/* RFC 7748 Montgomery base point: u = 5 for X448, u = 9 for X25519. */
+static void
+curve_base(uint8_t *b)
+{
+    memset(b, 0, GY_CURVE_PK_MAX);
+    b[0] = (D->curve_type == GY_CURVE_TYPE_448) ? 5 : 9;
+}
+
+/* Dispatch the FIPS 203 derand seams by tier (mlkem512 at 25519, mlkem1024 at
+ * 448); the suite pins the KEM param set alongside the curve. */
+static int
+kem_keypair_derand(uint8_t *ek, uint8_t *dk, const uint8_t *seed)
+{
+    return D->curve_type == GY_CURVE_TYPE_448
+               ? gy_mlkem1024_keypair_derand(ek, dk, seed)
+               : gy_mlkem512_keypair_derand(ek, dk, seed);
+}
+
+static int
+kem_encaps_derand(uint8_t *ct, uint8_t *ss, const uint8_t *ek,
+                  const uint8_t *seed)
+{
+    return D->curve_type == GY_CURVE_TYPE_448
+               ? gy_mlkem1024_encaps_derand(ct, ss, ek, seed)
+               : gy_mlkem512_encaps_derand(ct, ss, ek, seed);
+}
 
 static char g_name[MAXREC][8];
 static uint8_t g_buf[MAXREC][RECBUF];
@@ -94,24 +148,24 @@ fixed_salt(uint8_t *out, size_t n)
 static int
 derand_kem_keypair(const struct gy_suite_desc *desc, uint8_t *ek, uint8_t *dk)
 {
-    uint8_t seed[GY_MLKEM512_KEYPAIR_SEED];
+    uint8_t seed[KEM_KP_SEED];
 
     (void)desc;
     fill(seed, sizeof(seed), (uint8_t)(0x40 + g_kkp));
     g_kkp++;
-    return gy_mlkem_keypair_derand(ek, dk, seed);
+    return kem_keypair_derand(ek, dk, seed);
 }
 
 static int
 derand_kem_encaps(const struct gy_suite_desc *desc, uint8_t *ct, uint8_t *ss,
                   const uint8_t *ek)
 {
-    uint8_t seed[GY_MLKEM512_ENCAPS_SEED];
+    uint8_t seed[KEM_ENC_SEED];
 
     (void)desc;
     fill(seed, sizeof(seed), (uint8_t)(0x80 + g_kenc));
     g_kenc++;
-    return gy_mlkem_encaps_derand(ct, ss, ek, seed);
+    return kem_encaps_derand(ct, ss, ek, seed);
 }
 
 /* ---- record table ----------------------------------------------------- */
@@ -155,23 +209,27 @@ make_secrets(struct gy_dr_secrets *s)
     }
 }
 
-/* Build Bob's SPK hybrid keypair deterministically (fixed scalar + derand KEM). */
+/* Build Bob's SPK hybrid keypair deterministically (fixed scalar + derand KEM).
+ */
 static void
 build_bob_spk(struct gy_hybrid_keypair *spk)
 {
-    uint8_t seed[GY_MLKEM512_KEYPAIR_SEED];
+    uint8_t seed[KEM_KP_SEED];
+    uint8_t base[GY_CURVE_PK_MAX];
 
     memset(spk, 0, sizeof(*spk));
     spk->pub.curve.curve_type = D->curve_type;
     spk->pub.curve.pkid = 0;
     memset(spk->curve_sk, 0x33, D->curve_pk_len);
-    ASSERT_EQ(D->dh(spk->pub.curve.pk, spk->curve_sk, BASE), GY_OK);
+    curve_base(base);
+    ASSERT_EQ(D->dh(spk->pub.curve.pk, spk->curve_sk, base), GY_OK);
     fill(seed, sizeof(seed), 0x01);
-    ASSERT_EQ(gy_mlkem_keypair_derand(spk->pub.mlkem_ek, spk->mlkem_dk, seed),
+    ASSERT_EQ(kem_keypair_derand(spk->pub.mlkem_ek, spk->mlkem_dk, seed),
               GY_OK);
 }
 
-/* Encrypt pt on `from`, capture the frame, decrypt on `to`, assert round-trip. */
+/* Encrypt pt on `from`, capture the frame, decrypt on `to`, assert round-trip.
+ */
 static void
 relay(struct gy_hybrid_dr_state *from, struct gy_hybrid_dr_state *to,
       const uint8_t *ad, size_t adl, const char *pt, const char *rec)
@@ -198,21 +256,23 @@ run_conversation(void)
     struct gy_hybrid_dr_state alice, bob;
     struct gy_dr_secrets sa, sb;
     uint8_t aik_ek[GY_KEM_EK_MAX], aik_dk[GY_KEM_DK_MAX];
-    uint8_t seed[GY_MLKEM512_KEYPAIR_SEED];
+    uint8_t seed[KEM_KP_SEED];
+    uint8_t base[GY_CURVE_PK_MAX];
     uint8_t ad[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     uint8_t f4[RECBUF], f5[RECBUF], out[256];
     size_t l4, l5, ol, i;
 
+    curve_base(base);
     for (i = 0; i < 8; i++) {
         memset(g_curve[i].sk, (uint8_t)(0x11 * (i + 1)), D->curve_pk_len);
         g_curve[i].pub.curve_type = D->curve_type;
         g_curve[i].pub.pkid = 0;
-        ASSERT_EQ(D->dh(g_curve[i].pub.pk, g_curve[i].sk, BASE), GY_OK);
+        ASSERT_EQ(D->dh(g_curve[i].pub.pk, g_curve[i].sk, base), GY_OK);
     }
 
     build_bob_spk(&bob_spk);
     fill(seed, sizeof(seed), 0x02); /* Alice identity KEM keypair */
-    ASSERT_EQ(gy_mlkem_keypair_derand(aik_ek, aik_dk, seed), GY_OK);
+    ASSERT_EQ(kem_keypair_derand(aik_ek, aik_dk, seed), GY_OK);
     make_secrets(&sa);
     sb = sa;
 
@@ -275,7 +335,7 @@ write_records(void)
     FILE *f;
     size_t i, j;
 
-    f = fopen(VEC_PATH, "w");
+    f = fopen(vecpath(), "w");
     if (f == NULL)
         return -1;
     fprintf(f, "# hybrid Double Ratchet frame self-KATs (HYBRID_SPEC 11.2); see"
@@ -300,11 +360,11 @@ TEST(hybrid_dr_self_vectors)
     g_nrec = 0;
     run_conversation();
 
-    f = fopen(VEC_PATH, "r");
+    f = fopen(vecpath(), "r");
     if (f == NULL) {
         ASSERT_EQ(write_records(), 0);
         fprintf(stderr, "  (wrote %s; review and record its sha256)\n",
-                VEC_PATH);
+                vecpath());
         return;
     }
 
@@ -348,16 +408,23 @@ TEST(hybrid_dr_self_vectors)
 int
 main(void)
 {
+    /* One seeded reference conversation per hybrid tier, each pinning its own
+     * vector file (dr_hybrid_self.vec / dr_hybrid_448_self.vec). */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(hybrid_dr_self_vectors),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(hybrid_dr_self_vectors),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

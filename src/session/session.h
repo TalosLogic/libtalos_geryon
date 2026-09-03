@@ -76,8 +76,8 @@
     (GY_DEVICE_BLOB_MAX + GY_KEM_EK_MAX + GY_DSA_PK_MAX)
 
 /*
- * Widest stored AD_session across suites.  The hybrid AD_session is IKhash(A) ||
- * IKhash(B) = 2 * hash_len (128 B at the 448 tier), wider than the classical
+ * Widest stored AD_session across suites.  The hybrid AD_session is IKhash(A)
+ * || IKhash(B) = 2 * hash_len (128 B at the 448 tier), wider than the classical
  * EncodeEC pair (GY_X3DH_AD_MAX); size the session AD buffer to cover both.
  */
 #define GY_SESSION_AD_MAX GY_HYBRID_AD_MAX
@@ -141,9 +141,10 @@ struct gy_device_record {
  * A hybrid peer device record (composition): the classical record plus the
  * peer's ML-KEM and ML-DSA identity keys (section 4.2).  `base.ik` still holds
  * the curve identity key and all the session-list/stale machinery operates on
- * `base` unchanged; the two PQ components ride alongside so key-change detection
- * (gy_hybrid_conditional_update) can compare the FULL hybrid identity.  Sized to
- * the GY_KEM_/GY_DSA_ maxima; each suite uses its descriptor lengths.
+ * `base` unchanged; the two PQ components ride alongside so key-change
+ * detection (gy_hybrid_conditional_update) can compare the FULL hybrid
+ * identity.  Sized to the GY_KEM_/GY_DSA_ maxima; each suite uses its
+ * descriptor lengths.
  */
 struct gy_hybrid_device_record {
     struct gy_device_record base;
@@ -205,9 +206,9 @@ void gy_session_free(struct gy_session *s);
 /* ---- DeviceRecord ------------------------------------------------------- */
 
 /*
- * Derive a DeviceRecord's store key from the (UserID, DeviceID) pair (D-SES-12):
- * out = SHA-512("geryon-devrec-key" || be32(user_id_len) || user_id ||
- * be32(device_id_len) || device_id), GY_DEVKEY_LEN (64) bytes.  Unconditional
+ * Derive a DeviceRecord's store key from the (UserID, DeviceID) pair
+ * (D-SES-12): out = SHA-512("geryon-devrec-key" || be32(user_id_len) || user_id
+ * || be32(device_id_len) || device_id), GY_DEVKEY_LEN (64) bytes. Unconditional
  * SHA-512 (suite-independent): a store key needs only collision resistance, and
  * one hash keeps the key a uniform 64 bytes across suites.  The be32 length
  * prefixes disambiguate the variable-length pair.  Returns GY_OK or GY_ERR_ARG.
@@ -255,9 +256,10 @@ void gy_device_record_free(struct gy_device_record *d);
 
 /*
  * Hybrid DeviceRecord (composition): the classical record plus the peer's PQ
- * identity keys.  init copies the curve identity into base and the ML-KEM/ML-DSA
- * keys alongside; encode/decode round-trip the whole record (base body + PQ);
- * free zeroizes.  The session-list operations reuse the classical functions on
+ * identity keys.  init copies the curve identity into base and the
+ * ML-KEM/ML-DSA keys alongside; encode/decode round-trip the whole record (base
+ * body + PQ); free zeroizes.  The session-list operations reuse the classical
+ * functions on
  * `&d->base`.  suite_id must name a hybrid suite; encode/decode use its
  * descriptor lengths.
  */

@@ -2,15 +2,17 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the hybrid X3DH handshake in src/kex/x3dh.c (HYBRID_SPEC section 6),
- * built with -DGY_TEST_HOOKS.  Covers: initiator/responder interop (identical
- * seed triple and AD, with and without OPK), the pinned 4508-byte prefix,
- * hybrid_flag round-trip and validation, corrupt-ciphertext implicit rejection
- * (no KEM oracle: responder completes, SK diverges), and the embedded-PKID /
- * stale-identity / reserved-bit tamper matrix.
+ * Tests for the hybrid X3DH handshake in src/kex/x3dh.c (HYBRID_SPEC section
+ * 6), built with -DGY_TEST_HOOKS.  Covers: initiator/responder interop
+ * (identical seed triple and AD, with and without OPK), the pinned prefix
+ * length (4508 at h25519_512, 9004 at h448_1024), hybrid_flag round-trip and
+ * validation, corrupt-ciphertext implicit rejection (no KEM oracle: responder
+ * completes, SK diverges), and the embedded-PKID / stale-identity /
+ * reserved-bit tamper matrix.
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "x3dh.h"
@@ -18,8 +20,12 @@
 #include "gy_test.h"
 
 #define FLAGS_OK ((uint64_t)1 | ((uint64_t)20 << 16) | ((uint64_t)1 << 32))
-#define HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 0x01 */
+#define HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 0x01   \
+                                                    */
 #define TS 1723900000ULL
+
+/* Pinned by main() to each hybrid tier in turn (section 6 is suite-generic). */
+static const struct gy_suite_desc *D;
 
 /* Bob's long-lived material plus a published bundle; Alice's identity. */
 struct parties {
@@ -96,7 +102,7 @@ alice_initiate(const struct gy_suite_desc *desc, struct parties *p,
 
 TEST(interop_with_opk)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct parties p;
     struct gy_dr_secrets sa, sb;
     struct gy_hybrid_x3dh_local local;
@@ -107,7 +113,7 @@ TEST(interop_with_opk)
     uint32_t flag_out;
     struct gy_keypair ek;
 
-    ASSERT_TRUE(desc != NULL, "h25519_512 enabled");
+    ASSERT_TRUE(desc != NULL, "hybrid suite enabled");
     ASSERT_EQ(gen_parties(desc, &p), GY_OK);
 
     /* Initiate (capture AD by re-running with an exposed ek is unnecessary; we
@@ -118,7 +124,10 @@ TEST(interop_with_opk)
               GY_OK);
     gy_secure_zero(&ek, sizeof(ek));
 
-    ASSERT_EQ((long long)plen, 4508); /* pinned h25519_512 prefix */
+    /* Pinned initiator prefix length per tier (section 6.5 layout): 4508 at
+     * h25519_512, 9004 at h448_1024. */
+    ASSERT_EQ((long long)plen,
+              desc->curve_type == GY_CURVE_TYPE_448 ? 9004 : 4508);
 
     bob_local(&p, &local, 1);
     ASSERT_EQ(gy_hybrid_x3dh_respond(desc, &sb, ad_b, &adlen_b, &opk_ref,
@@ -136,7 +145,7 @@ TEST(interop_with_opk)
 
 TEST(interop_without_opk)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct parties p;
     struct gy_dr_secrets sa, sb;
     struct gy_hybrid_x3dh_local local;
@@ -161,7 +170,7 @@ TEST(interop_without_opk)
 
 TEST(corrupt_ct_implicit_rejection)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct parties p;
     struct gy_dr_secrets sa, sb;
     struct gy_hybrid_x3dh_local local;
@@ -190,7 +199,7 @@ TEST(corrupt_ct_implicit_rejection)
 
 TEST(tamper_matrix)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct parties p;
     struct gy_dr_secrets sa, sb;
     struct gy_hybrid_x3dh_local local;
@@ -230,7 +239,7 @@ TEST(tamper_matrix)
 
 TEST(bad_hybrid_flag_initiate)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct parties p;
     struct gy_dr_secrets sa;
     uint8_t prefix[GY_HYBRID_X3DH_PREFIX_MAX];
@@ -259,17 +268,26 @@ TEST(bad_hybrid_flag_initiate)
 int
 main(void)
 {
+    /* Section 6 is descriptor-generic; run the whole matrix per hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(interop_with_opk),
+        GY_TEST(interop_without_opk),
+        GY_TEST(corrupt_ct_implicit_rejection),
+        GY_TEST(tamper_matrix),
+        GY_TEST(bad_hybrid_flag_initiate),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(interop_with_opk),
-            GY_TEST(interop_without_opk),
-            GY_TEST(corrupt_ct_implicit_rejection),
-            GY_TEST(tamper_matrix),
-            GY_TEST(bad_hybrid_flag_initiate),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

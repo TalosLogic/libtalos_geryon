@@ -26,14 +26,14 @@
 
 /*
  * Include order matters, twice over:
- *   1. libdecaf's internal field.h defines __DECAF_448_GF_DEFINED__ and the full
- *      gf_448 struct; the public decaf.h (point_448.h) only defines that struct
- *      when the guard is unset.  field.h therefore MUST precede decaf.h, exactly
- *      as libdecaf's own decaf.c does (word.h -> field.h -> decaf.h).
+ *   1. libdecaf's internal field.h defines __DECAF_448_GF_DEFINED__ and the
+ * full gf_448 struct; the public decaf.h (point_448.h) only defines that struct
+ *      when the guard is unset.  field.h therefore MUST precede decaf.h,
+ * exactly as libdecaf's own decaf.c does (word.h -> field.h -> decaf.h).
  *   2. word.h sets __STDC_WANT_LIB_EXT1__ to 1 (word.h:10), which macOS
- *      (__DARWIN_C_LEVEL) requires BEFORE <string.h> to declare memset_s (word.h
- *      really_memset calls it).  So the decaf headers precede <string.h> here;
- *      we do NOT set the macro ourselves (that would redefine word.h's under
+ *      (__DARWIN_C_LEVEL) requires BEFORE <string.h> to declare memset_s
+ * (word.h really_memset calls it).  So the decaf headers precede <string.h>
+ * here; we do NOT set the macro ourselves (that would redefine word.h's under
  *      -Werror).  Harmless where Annex K is absent (glibc omits memset_s, so
  *      decaf takes its volatile-loop fallback).
  */
@@ -95,7 +95,8 @@ gf_secure_scrub(gf a)
     gy_secure_zero(a, sizeof(gf));
 }
 
-/* The birational curve constant d = 39082 * inv(39081) mod p (a = 1 Edwards). */
+/* The birational curve constant d = 39082 * inv(39081) mod p (a = 1 Edwards).
+ */
 static void
 curve_d(gf d)
 {
@@ -295,8 +296,8 @@ pt_from_y(struct pt *p, const gf y, int force_zero, unsigned want_sign,
 
 /*
  * Encode an affine/extended point to 57 bytes: 56-byte little-endian y, then a
- * 57th byte holding x's low bit in bit 7 (D-XED-8/13 R6).  force_zero clears the
- * sign (for A, which is defined with sign 0).
+ * 57th byte holding x's low bit in bit 7 (D-XED-8/13 R6).  force_zero clears
+ * the sign (for A, which is defined with sign 0).
  */
 static void
 pt_encode(uint8_t out[57], const struct pt *p, int force_zero)
@@ -316,15 +317,15 @@ pt_encode(uint8_t out[57], const struct pt *p, int force_zero)
 }
 
 /*
- * u_to_y(u) = (u + 1) * inv(u - 1) on the birational curve, yielding the Edwards
- * y-coordinate for a Montgomery u.  (This is the value consistent with RFC 7748
- * X448 and d = 39082/39081: the sign-path A = k*B matches the verify-path
- * A = u_to_y(x448(k)) only with this orientation, verified by cross-check
- * against the ladder.  It is the negation of the (1+u)*inv(1-u) form transcribed
- * from XEdDSA section 6; the D-XED-8 CORRECTION (2026-08-20) records this
- * negated, X448-compatible orientation as the one this file uses.)
- * Returns the canonicality mask of u (all-ones if u < p); a non-canonical public
- * key is rejected upstream.
+ * u_to_y(u) = (u + 1) * inv(u - 1) on the birational curve, yielding the
+ * Edwards y-coordinate for a Montgomery u.  (This is the value consistent with
+ * RFC 7748 X448 and d = 39082/39081: the sign-path A = k*B matches the
+ * verify-path A = u_to_y(x448(k)) only with this orientation, verified by
+ * cross-check against the ladder.  It is the negation of the (1+u)*inv(1-u)
+ * form transcribed from XEdDSA section 6; the D-XED-8 CORRECTION (2026-08-20)
+ * records this negated, X448-compatible orientation as the one this file uses.)
+ * Returns the canonicality mask of u (all-ones if u < p); a non-canonical
+ * public key is rejected upstream.
  */
 static mask_t
 u_to_y(gf y, const uint8_t u_bytes[56])

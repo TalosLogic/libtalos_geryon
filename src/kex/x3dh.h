@@ -136,14 +136,14 @@ struct gy_hybrid_x3dh_local {
 /*
  * Hybrid initiator.  Validates peer's bundle FIRST (D-X3DH-14), validates the
  * chosen hybrid_flag against the SPK's advertised flags, encapsulates to Bob's
- * IK/SPK/OPK, computes DH1..DH4, fuses each pair (section 6.3), derives the seed
- * triple (section 6.4) and AD_first (section 6.7), and writes the 4508-byte
- * initial-message prefix (section 6.5, ending in hybrid_flag; the caller
- * appends ciphertext_len and the AEAD first message).  ek is the caller's fresh
- * ephemeral pair; its private key is zeroized on every path.  out_ad has room
- * for GY_HYBRID_AD_MAX, out_prefix for GY_HYBRID_X3DH_PREFIX_MAX.  Returns
- * GY_OK, GY_ERR_WEAK_KEY on a degenerate DH, GY_ERR_VERIFY on a bad hybrid_flag,
- * or the bundle-validation error.
+ * IK/SPK/OPK, computes DH1..DH4, fuses each pair (section 6.3), derives the
+ * seed triple (section 6.4) and AD_first (section 6.7), and writes the
+ * 4508-byte initial-message prefix (section 6.5, ending in hybrid_flag; the
+ * caller appends ciphertext_len and the AEAD first message).  ek is the
+ * caller's fresh ephemeral pair; its private key is zeroized on every path.
+ * out_ad has room for GY_HYBRID_AD_MAX, out_prefix for
+ * GY_HYBRID_X3DH_PREFIX_MAX.  Returns GY_OK, GY_ERR_WEAK_KEY on a degenerate
+ * DH, GY_ERR_VERIFY on a bad hybrid_flag, or the bundle-validation error.
  */
 int gy_hybrid_x3dh_initiate(const struct gy_suite_desc *desc,
                             struct gy_dr_secrets *out_secrets, uint8_t *out_ad,

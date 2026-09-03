@@ -230,9 +230,9 @@ static const uint8_t IDMAT_HYBRID_AD[1] = {0x11};
 
 /*
  * Guarded-allocation size for a custodian of the given suite: a hybrid suite
- * gets the composed gy_hybrid_custodian (base + hybrid material).  Used for both
- * the allocation and every gy_wipe of the whole object, so hybrid key bytes are
- * always zeroized on teardown.
+ * gets the composed gy_hybrid_custodian (base + hybrid material).  Used for
+ * both the allocation and every gy_wipe of the whole object, so hybrid key
+ * bytes are always zeroized on teardown.
  */
 #define CUST_SIZE(desc)                                                        \
     (((desc) != NULL && (desc)->is_hybrid)                                     \
@@ -933,8 +933,8 @@ gy_custodian_open(struct gy_custodian **out, const gy_store_callbacks *store,
         return GY_ERR_ARG;
     }
 
-    /* Guarded allocation sized to the suite (CUSTODY_SPEC section 15: the object
-     * embeds every unlocked key directly). */
+    /* Guarded allocation sized to the suite (CUSTODY_SPEC section 15: the
+     * object embeds every unlocked key directly). */
     c = gy_guarded_alloc(CUST_SIZE(desc));
     if (c == NULL) {
         gy_wipe(&hdr, sizeof(hdr));
@@ -1456,7 +1456,7 @@ cust_replenish_opks(struct gy_custodian *c, size_t count)
 
 /*
  * Hybrid OPK replenishment core (no CUST_ENTER; caller holds the custodian):
- * generate `count` hybrid one-time prekeys into free hopk slots, reseal.  Shared
+ * generate `count` hybrid one-time prekeys into free hopk slots, reseal. Shared
  * by generate_onetime_prekeys and (b-iii-2b) the hybrid one-shot bundle path.
  */
 static int
@@ -2020,9 +2020,9 @@ gy_custodian_delete_prekey(struct gy_custodian *c, gy_key_handle h)
  */
 
 #define GY_APPKEY_INFO_MAX                                                     \
-    64 /* "geryon.1.<suite>.<purpose>"; matches the
-                               * GY_INFO_MAX convention in x3dh.c/he.c/
-                               * double_ratchet.c */
+    64 /* "geryon.1.<suite>.<purpose>"; matches the                            \
+        * GY_INFO_MAX convention in x3dh.c/he.c/                               \
+        * double_ratchet.c */
 
 /* Build the identity's cert-signing input: appkey-cert info || EncodeEC
  * (sak_pub) || issued_at_be64 || expiry_be64 || identity_pkid_be32.

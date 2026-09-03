@@ -10,19 +10,21 @@
 #include "encode.h"
 #include "error.h"
 #include "hash.h"
-#include "mldsa.h"
-#include "mlkem.h"
+#include "mldsa44.h"
+#include "mldsa87.h"
+#include "mlkem1024.h"
+#include "mlkem512.h"
 #include "suite.h"
 #include "x25519.h"
 #include "x448.h"
 
 /*
  * The enabled suites (D-GEN-7).  geryon_c25519 (classical), geryon_h25519_512
- * (hybrid), and geryon_c448 (classical, 448 tier) are enabled; geryon_h448_1024
- * is added as its primitives land.  Ops are the core wrappers; the
+ * (hybrid), geryon_c448 (classical, 448 tier), and geryon_h448_1024 (hybrid,
+ * 448 tier) are all enabled.  Ops are the core wrappers; the
  * array-to-pointer parameter adjustment makes the fixed-size wrapper prototypes
- * assignable to the generic pointer types with no cast.  Reserved sizes/ops stay
- * 0/NULL.
+ * assignable to the generic pointer types with no cast.  Hybrid-only sizes/ops
+ * stay 0/NULL in classical rows.
  */
 static const struct gy_suite_desc gy_suites[] = {
     {
@@ -80,12 +82,12 @@ static const struct gy_suite_desc gy_suites[] = {
         .dsa_sk_len = 2560,
         .dsa_sig_len = 2420,
 
-        .kem_keypair = gy_mlkem_keypair,
-        .kem_encap = gy_mlkem_encaps,
-        .kem_decap = gy_mlkem_decaps,
-        .dsa_keypair = gy_mldsa_keypair,
-        .dsa_sign = gy_mldsa_sign,
-        .dsa_verify = gy_mldsa_verify,
+        .kem_keypair = gy_mlkem512_keypair,
+        .kem_encap = gy_mlkem512_encaps,
+        .kem_decap = gy_mlkem512_decaps,
+        .dsa_keypair = gy_mldsa44_keypair,
+        .dsa_sign = gy_mldsa44_sign,
+        .dsa_verify = gy_mldsa44_verify,
     },
     {
         .suite_id = GY_SUITE_C448,
@@ -109,6 +111,45 @@ static const struct gy_suite_desc gy_suites[] = {
         .hmac = gy_hmac_sha512_iov,
         .hkdf_extract = gy_hkdf_sha512_extract_iov,
         .hkdf_expand = gy_hkdf_sha512_expand,
+    },
+    {
+        .suite_id = GY_SUITE_H448_1024,
+        .curve_type = GY_CURVE_TYPE_448,
+        .is_hybrid = 1,
+        .name = "h448_1024",
+
+        .curve_pk_len = 56,
+        .curve_sk_len = 56,
+        .dh_len = 56,
+        .sig_len = 114,
+        .hash_len = 64,
+        .f_len = 57,
+
+        .keypair = gy_x448_keypair,
+        .dh = gy_x448,
+        .sign = gy_xed448_sign,
+        .verify = gy_xed448_verify,
+
+        .hash = gy_sha512,
+        .hmac = gy_hmac_sha512_iov,
+        .hkdf_extract = gy_hkdf_sha512_extract_iov,
+        .hkdf_expand = gy_hkdf_sha512_expand,
+
+        /* ML-KEM-1024 (FIPS 203) and ML-DSA-87 (FIPS 204). */
+        .kem_pk_len = 1568,
+        .kem_sk_len = 3168,
+        .kem_ct_len = 1568,
+        .kem_ss_len = 32,
+        .dsa_pk_len = 2592,
+        .dsa_sk_len = 4896,
+        .dsa_sig_len = 4627,
+
+        .kem_keypair = gy_mlkem1024_keypair,
+        .kem_encap = gy_mlkem1024_encaps,
+        .kem_decap = gy_mlkem1024_decaps,
+        .dsa_keypair = gy_mldsa87_keypair,
+        .dsa_sign = gy_mldsa87_sign,
+        .dsa_verify = gy_mldsa87_verify,
     },
 };
 

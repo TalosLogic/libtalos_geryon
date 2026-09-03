@@ -64,16 +64,20 @@ enum demo_msg_type {
     /* SAK rotation: after gy_custodian_rotate_appkey the client
      * publishes the NEW cert as active and the retained PRIOR cert separately;
      * the coordinator accepts a request that verifies against EITHER during the
-     * rotation window (the retained-history property, mirroring SPK rotation). */
-    DEMO_MSG_PUBLISH_PRIOR_CERT, /* client -> coordinator: my retained prior SAK cert */
+     * rotation window (the retained-history property, mirroring SPK rotation).
+     */
+    DEMO_MSG_PUBLISH_PRIOR_CERT, /* client -> coordinator: my retained prior SAK
+                                    cert */
 
     /* Identity verification: safety-number exchange.  A client
      * publishes its own gy_self_fingerprint, then fetches a peer's identity
      * (published registration plus that self-fingerprint) so it can derive the
      * peer's fingerprint locally with gy_bundle_fingerprint and compare. */
-    DEMO_MSG_PUBLISH_FINGERPRINT, /* client -> coordinator: my self-fingerprint */
+    DEMO_MSG_PUBLISH_FINGERPRINT, /* client -> coordinator: my self-fingerprint
+                                   */
     DEMO_MSG_FETCH_IDENTITY, /* client -> coordinator: peer's reg + self-fp */
-    DEMO_MSG_IDENTITY, /* coordinator -> client: fp_len_be16 || fp || registration */
+    DEMO_MSG_IDENTITY,       /* coordinator -> client: fp_len_be16 || fp ||
+                                registration */
 
     /* One-shot full-bundle publish.  A client publishes a
      * complete gy_publish_bundle output (IK + signed SPK + one reserved OPK)
@@ -82,21 +86,26 @@ enum demo_msg_type {
      * pool, so a one-shot identity must never also publish through the granular
      * registration+OPK-batch path (they would draw from one pool); the demo
      * uses a dedicated one-shot identity to honor that. */
-    DEMO_MSG_PUBLISH_ONESHOT, /* client -> coordinator: my one-shot full bundle */
+    DEMO_MSG_PUBLISH_ONESHOT, /* client -> coordinator: my one-shot full bundle
+                               */
     DEMO_MSG_FETCH_ONESHOT, /* client -> coordinator: peer's one-shot bundle */
     DEMO_MSG_ONESHOT,       /* coordinator -> client: the one-shot bundle */
 
     /* No-OPK handshake path.  A client publishes a registration
      * for a deliberately OPK-less fetch; the coordinator assembles the bundle
      * with gy_bundle_assemble(..., opk_pub == NULL) so the peer initiates an
-     * X3DH session with NO one-time prekey (valid, but reduced forward secrecy).
-     * Kept on a dedicated identity so it neither draws a directory OPK nor
-     * perturbs the main conversation.  The reply reuses DEMO_MSG_BUNDLE. */
-    DEMO_MSG_PUBLISH_NOOPK_REG, /* client -> coordinator: my no-OPK-path registration */
-    DEMO_MSG_FETCH_NOOPK, /* client -> coordinator: peer's registration, no OPK */
+     * X3DH session with NO one-time prekey (valid, but reduced forward
+     * secrecy). Kept on a dedicated identity so it neither draws a directory
+     * OPK nor perturbs the main conversation.  The reply reuses
+     * DEMO_MSG_BUNDLE. */
+    DEMO_MSG_PUBLISH_NOOPK_REG, /* client -> coordinator: my no-OPK-path
+                                   registration */
+    DEMO_MSG_FETCH_NOOPK, /* client -> coordinator: peer's registration, no OPK
+                           */
 
     /* Restart handoff: the sender is exiting and should be
-     * re-forked; its sealed store persists, the coordinator's state persists. */
+     * re-forked; its sealed store persists, the coordinator's state persists.
+     */
     DEMO_MSG_RESTART,
 
     /* Orderly teardown, and a uniform failure reply. */

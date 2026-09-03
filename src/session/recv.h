@@ -12,9 +12,9 @@
 #include "lifecycle.h"
 
 /*
- * Sesame receive path (the Sesame specification, section 3.4, D-SES-6, D-X3DH-10,
- * D-DR-17).  The milestone's security-critical operation: it decides which
- * session (if any) owns an incoming message, decrypts it, and commits the
+ * Sesame receive path (the Sesame specification, section 3.4, D-SES-6,
+ * D-X3DH-10, D-DR-17).  The milestone's security-critical operation: it decides
+ * which session (if any) owns an incoming message, decrypts it, and commits the
  * resulting state transactionally, all under header encryption where the wire
  * carries no routing aid (D-SES-6.6).
  *
@@ -111,9 +111,9 @@ int gy_recv(struct gy_recv_ctx *c, const uint8_t *user_id, size_t user_id_len,
  * ------------------------------------------------------------------------- */
 
 /*
- * Receive one enveloped message on a hybrid identity.  c is a gy_recv_ctx pinned
- * to the hybrid suite; local_hik is the responder hybrid identity; hspks[0..
- * n_hspks) is the current hybrid signed prekey plus retained history
+ * Receive one enveloped message on a hybrid identity.  c is a gy_recv_ctx
+ * pinned to the hybrid suite; local_hik is the responder hybrid identity;
+ * hspks[0.. n_hspks) is the current hybrid signed prekey plus retained history
  * (n_hspks >= 1); hopks may be NULL with n_hopks 0.  Initiations run the hybrid
  * handshake (full-identity conditional update, hybrid X3DH, KEM confirmation
  * state); Double Ratchet messages reuse the shared association path.  Same

@@ -11,10 +11,10 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "encode.h"
-#include "mldsa.h"
 #include "prekeys.h"
 
 #include "gy_test.h"
@@ -23,6 +23,13 @@
 #define FLAGS_OK ((uint64_t)1 | ((uint64_t)20 << 16) | ((uint64_t)1 << 32))
 
 #define TS 1723900000ULL
+
+/* Largest encoded identity across tiers: tag || curve_pk || kem_ek || dsa_pk.
+ */
+#define ENCBUF (8 + GY_CURVE_PK_MAX + GY_KEM_EK_MAX + GY_DSA_PK_MAX)
+
+/* Pinned by main() to each hybrid tier in turn (sections 4, 5 are generic). */
+static const struct gy_suite_desc *D;
 
 static void
 reset_counters(void)
@@ -68,30 +75,33 @@ setup_bundle(const struct gy_suite_desc *desc,
 
 TEST(generate_and_validate)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
-    uint8_t enc[4096];
+    uint8_t enc[ENCBUF];
     size_t len;
+    int is448 = desc->curve_type == GY_CURVE_TYPE_448;
     uint8_t diag = 0xEE;
 
-    ASSERT_TRUE(desc != NULL, "h25519_512 suite is enabled");
+    ASSERT_TRUE(desc != NULL, "hybrid suite is enabled");
     ASSERT_EQ(desc->is_hybrid, 1);
     ASSERT_EQ(setup_bundle(desc, &b), GY_OK);
 
-    /* Encoded-key size KATs (the bytes PKIDs and signatures cover). */
+    /* Encoded-key size KATs (the bytes PKIDs and signatures cover): tag ||
+     * curve_pk || kem_ek for the pub, plus dsa_pk for the identity.  25519:
+     * 1+32+800=833, 833+1312=2145.  448: 1+56+1568=1625, 1625+2592=4217. */
     ASSERT_EQ(gy_hybrid_encode_pub(desc, &b.spk, enc, sizeof(enc), &len),
               GY_OK);
-    ASSERT_EQ((long long)len, 833); /* 1 + 32 + 800 */
+    ASSERT_EQ((long long)len, is448 ? 1625 : 833);
     ASSERT_EQ(gy_hybrid_encode_identity(desc, &b.ik, enc, sizeof(enc), &len),
               GY_OK);
-    ASSERT_EQ((long long)len, 2145); /* 833 + 1312 */
+    ASSERT_EQ((long long)len, is448 ? 4217 : 2145);
 
     ASSERT_EQ(gy_hybrid_bundle_validate(desc, &b, &diag), GY_OK);
 }
 
 TEST(dual_signature_matrix)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
     uint8_t diag;
 
@@ -126,7 +136,7 @@ TEST(dual_signature_matrix)
 
 TEST(pkid_and_signer_binding)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
 
     /* Tampered embedded IK PKID: recompute mismatch. */
@@ -147,7 +157,7 @@ TEST(pkid_and_signer_binding)
 
 TEST(flags_matrix)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
 
     /* gy_hybrid_spk_create refuses to sign malformed flags up front. */
@@ -189,7 +199,7 @@ TEST(flags_matrix)
 
 TEST(ctx_load_bearing)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
     uint8_t sd[4096], ctx[64];
     size_t sdlen, ctxlen;
@@ -203,20 +213,22 @@ TEST(ctx_load_bearing)
     gy_be64_put(sd + sdlen + 8, b.spk_flags);
     sdlen += 16;
 
-    /* The ML-DSA prekey signature verifies ONLY under ctx = INFO("prekey"). */
+    /* The ML-DSA prekey signature verifies ONLY under ctx = INFO("prekey");
+     * dsa_verify dispatches to ML-DSA-44 (25519) or ML-DSA-87 (448) by suite.
+     */
     ASSERT_EQ(
-        gy_mldsa_verify(b.spk_mldsa_sig, b.ik.mldsa_pk, sd, sdlen, NULL, 0),
+        desc->dsa_verify(b.spk_mldsa_sig, b.ik.mldsa_pk, sd, sdlen, NULL, 0),
         GY_ERR_VERIFY);
     ASSERT_EQ(gy_info(ctx, sizeof(ctx), &ctxlen, desc->suite_id, "prekey"),
               GY_OK);
-    ASSERT_EQ(
-        gy_mldsa_verify(b.spk_mldsa_sig, b.ik.mldsa_pk, sd, sdlen, ctx, ctxlen),
-        GY_OK);
+    ASSERT_EQ(desc->dsa_verify(b.spk_mldsa_sig, b.ik.mldsa_pk, sd, sdlen, ctx,
+                               ctxlen),
+              GY_OK);
 }
 
 TEST(opk_absent_accepted)
 {
-    const struct gy_suite_desc *desc = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *desc = D;
     struct gy_hybrid_prekey_bundle b;
 
     ASSERT_EQ(setup_bundle(desc, &b), GY_OK);
@@ -228,15 +240,25 @@ TEST(opk_absent_accepted)
 int
 main(void)
 {
+    /* Sections 4, 5 are descriptor-generic; run the whole set per hybrid tier.
+     */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(generate_and_validate),   GY_TEST(dual_signature_matrix),
+        GY_TEST(pkid_and_signer_binding), GY_TEST(flags_matrix),
+        GY_TEST(ctx_load_bearing),        GY_TEST(opk_absent_accepted),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(generate_and_validate),   GY_TEST(dual_signature_matrix),
-            GY_TEST(pkid_and_signer_binding), GY_TEST(flags_matrix),
-            GY_TEST(ctx_load_bearing),        GY_TEST(opk_absent_accepted),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

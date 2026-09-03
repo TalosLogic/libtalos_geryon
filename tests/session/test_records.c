@@ -540,11 +540,14 @@ int
 main(void)
 {
     /*
-     * The classical-D cases run under both classical suites; the
-     * hybrid_* cases key on DH (h25519_512) and are unaffected by the D suite,
-     * so they simply re-run identically under each iteration.
+     * The classical-D cases run under both classical suites; the hybrid_* cases
+     * key on DH.  D and DH are paired by tier (25519 family, then 448 family)
+     * so the hybrid cases - including hybrid_session_free_zeroizes over the
+     * largest key material - are swept at BOTH hybrid tiers, not just
+     * h25519_512 (a zeroization sweep at the 448-tier sizes).
      */
     static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
+    static const uint8_t hsuites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
     static const struct gy_test_case cases[] = {
         GY_TEST(sessionid_determinism),
         GY_TEST(sessionid_cross_suite_rejected),
@@ -566,14 +569,12 @@ main(void)
 
     if (gy_core_init() != GY_OK)
         return 1;
-    DH = gy_suite_desc(GY_SUITE_H25519_512);
-    if (DH == NULL)
-        return 1;
     for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
         D = gy_suite_desc(suites[s]);
-        if (D == NULL)
+        DH = gy_suite_desc(hsuites[s]);
+        if (D == NULL || DH == NULL)
             return 1;
-        printf("== suite %s ==\n", D->name);
+        printf("== suite %s / %s ==\n", D->name, DH->name);
         rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
     return rc;

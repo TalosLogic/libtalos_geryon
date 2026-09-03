@@ -35,11 +35,12 @@
 #define GY_DR_AD_MSG_MAX (GY_X3DH_AD_MAX + GY_DR_HDR_WIRE_MAX)
 
 /*
- * DR session state (the Double Ratchet specification, section 3.2), sized by the GY_*_MAX
- * maxima.  aead_id flows through the state and the dr.aead KDF Context in all
- * suites (D-DR-3 amendment) so a future suite's AEAD selection is a data change, not a
- * code-path change; classical suites pin it to 0x01.  Layout is not ABI: the
- * struct is owned by the session layer and passed by pointer.
+ * DR session state (the Double Ratchet specification, section 3.2), sized by
+ * the GY_*_MAX maxima.  aead_id flows through the state and the dr.aead KDF
+ * Context in all suites (D-DR-3 amendment) so a future suite's AEAD selection
+ * is a data change, not a code-path change; classical suites pin it to 0x01.
+ * Layout is not ABI: the struct is owned by the session layer and passed by
+ * pointer.
  */
 struct gy_dr_state {
     const struct gy_suite_desc *desc;

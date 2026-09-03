@@ -38,11 +38,19 @@ add_executable(geryon_c448_demo c448_main.c ${GERYON_DEMO_COMMON_SRC})
 target_link_libraries(geryon_c448_demo PRIVATE geryon)
 target_compile_options(geryon_c448_demo PRIVATE ${GERYON_WARNINGS})
 
+# The highest-strength hybrid twin: same sources, geryon_h448_1024 selected in
+# h448_1024_main.c (X448 + ML-KEM-1024, XEd448 + ML-DSA-87, SHA-512).  Runs the
+# same hybrid walkthrough as geryon_hybrid_demo, one tier up.
+add_executable(geryon_h448_1024_demo h448_1024_main.c ${GERYON_DEMO_COMMON_SRC})
+target_link_libraries(geryon_h448_1024_demo PRIVATE geryon)
+target_compile_options(geryon_h448_1024_demo PRIVATE ${GERYON_WARNINGS})
+
 # Deterministic pass/fail: exit 0 is a pass, nonzero a fail.  Non-interactive,
 # network-free, bounded runtime, so it can be dropped into CI unchanged.
 add_test(NAME demo COMMAND geryon_demo)
 add_test(NAME hybrid_demo COMMAND geryon_hybrid_demo)
 add_test(NAME c448_demo COMMAND geryon_c448_demo)
+add_test(NAME h448_1024_demo COMMAND geryon_h448_1024_demo)
 
 # Fail-closed check: with GERYON_DEMO_FAULT set, an injected corruption must make
 # the demo exit nonzero.  A passing run here is a FAILED test (the demo did not
@@ -52,6 +60,9 @@ set_tests_properties(hybrid_demo_fault PROPERTIES
     ENVIRONMENT "GERYON_DEMO_FAULT=1" WILL_FAIL TRUE)
 add_test(NAME c448_demo_fault COMMAND geryon_c448_demo)
 set_tests_properties(c448_demo_fault PROPERTIES
+    ENVIRONMENT "GERYON_DEMO_FAULT=1" WILL_FAIL TRUE)
+add_test(NAME h448_1024_demo_fault COMMAND geryon_h448_1024_demo)
+set_tests_properties(h448_1024_demo_fault PROPERTIES
     ENVIRONMENT "GERYON_DEMO_FAULT=1" WILL_FAIL TRUE)
 
 # Build hygiene: the examples must include only the public geryon.h and their

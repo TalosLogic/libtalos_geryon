@@ -2,8 +2,11 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Spec-derived hybrid X3DH self-KATs (D-GEN-6, HYBRID_SPEC §11.2): the handshake
- * key schedule pinned from fixed inputs.  For the live hybrid suite this pins
+ * Spec-derived hybrid X3DH self-KATs (D-GEN-6, HYBRID_SPEC §11.2): the
+ * handshake key schedule pinned from fixed inputs.  Runs once per hybrid tier,
+ * each pinning its own file (tests/vectors/x3dh_self.vec for h25519_512,
+ * tests/vectors/x3dh_448_self.vec for h448_1024).  For each hybrid suite this
+ * pins
  *
  *   - HDH_i = HASH(kem_ss_i || dh_i), the §3.1 combiner (PQ-first ordering),
  *   - the seed triple SK derives to, with an OPK (4 combiners) and without it
@@ -11,13 +14,14 @@
  *   - AD_first = IKhash(A) || IKhash(B) || hybrid_flag_be32 (§6.7).
  *
  * The combiner/DH inputs are FIXED literal bytes, so no curve or KEM primitive
- * runs and no liboqs/libsodium behavior is frozen into the vector; only geryon's
- * own fusion ordering, F prefix, HKDF wiring, D-DR-13 expansion, and AD layout
- * determine the bytes (the SHA-256/HKDF that run are standard, single-answer
- * functions of those fixed inputs, exactly as in the ratchet self-KAT).  A
- * SELF-KAT, not an oracle: the hybrid schedule has no external generator.
+ * runs and no liboqs/libsodium behavior is frozen into the vector; only
+ * geryon's own fusion ordering, F prefix, HKDF wiring, D-DR-13 expansion, and
+ * AD layout determine the bytes (the SHA-256/HKDF that run are standard,
+ * single-answer functions of those fixed inputs, exactly as in the ratchet
+ * self-KAT).  A SELF-KAT, not an oracle: the hybrid schedule has no external
+ * generator.
  *
- * When tests/vectors/x3dh_self.vec is absent the test writes it directly (the
+ * When the tier's vector file is absent the test writes it directly (the
  * records are multi-KB; a terminal copy-paste hard-wraps them), then passes;
  * review the file and record its sha256 in the vectors README.
  */
@@ -32,18 +36,28 @@
 
 #include "gy_test.h"
 
-#define VEC_PATH GERYON_TEST_SOURCE_DIR "/tests/vectors/x3dh_self.vec"
+#define VEC_PATH_25519 GERYON_TEST_SOURCE_DIR "/tests/vectors/x3dh_self.vec"
+#define VEC_PATH_448 GERYON_TEST_SOURCE_DIR "/tests/vectors/x3dh_448_self.vec"
 
-/* Fixed first-message hybrid_flag: aead_id 1 (ChaCha20-Poly1305), interval 20. */
+/* Fixed first-message hybrid_flag: aead_id 1 (ChaCha20-Poly1305), interval 20.
+ */
 #define HFLAG ((uint32_t)20 | ((uint32_t)1 << 16))
 
 #define MAXREC 16
 #define RECBUF 512
 
+static const struct gy_suite_desc *D;
 static char g_name[MAXREC][24];
 static uint8_t g_buf[MAXREC][RECBUF];
 static size_t g_len[MAXREC];
 static size_t g_nrec;
+
+/* The suite's vector file (a distinct seeded schedule per hybrid tier). */
+static const char *
+vecpath(void)
+{
+    return (D->curve_type == GY_CURVE_TYPE_448) ? VEC_PATH_448 : VEC_PATH_25519;
+}
 
 static void
 add_rec(const char *name, const uint8_t *b, size_t n)
@@ -81,7 +95,7 @@ fake_identity(const struct gy_suite_desc *d,
 static void
 gen(void)
 {
-    const struct gy_suite_desc *d = gy_suite_desc(GY_SUITE_H25519_512);
+    const struct gy_suite_desc *d = D;
     uint8_t kem_ss[GY_KEM_SS_MAX], dh[GY_DH_MAX];
     uint8_t hdh[4][GY_HASH_MAX];
     uint8_t ad[GY_HYBRID_AD_MAX];
@@ -125,7 +139,7 @@ write_records(void)
     FILE *f;
     size_t i, j;
 
-    f = fopen(VEC_PATH, "w");
+    f = fopen(vecpath(), "w");
     if (f == NULL)
         return -1;
     fprintf(f, "# hybrid X3DH key-schedule self-KATs (HYBRID_SPEC 11.2); see"
@@ -162,11 +176,11 @@ TEST(hybrid_x3dh_self_vectors)
     g_nrec = 0;
     gen();
 
-    f = fopen(VEC_PATH, "r");
+    f = fopen(vecpath(), "r");
     if (f == NULL) {
         ASSERT_EQ(write_records(), 0);
         fprintf(stderr, "  (wrote %s; review and record its sha256)\n",
-                VEC_PATH);
+                vecpath());
         return;
     }
 
@@ -210,13 +224,23 @@ TEST(hybrid_x3dh_self_vectors)
 int
 main(void)
 {
+    /* One fixed-input schedule per hybrid tier, each pinning its own vector
+     * file (x3dh_self.vec / x3dh_448_self.vec). */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(hybrid_x3dh_self_vectors),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(hybrid_x3dh_self_vectors),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

@@ -8,25 +8,26 @@
  * timeness, and timing code that touches only public data is wasteful (it can
  * carry no secret leak).  That principle reduces the tier to two targets:
  *
- *   - gy_x448:      the wrapper over the vendored ladder.  The SECRET is the
- *                   scalar; class A fixes it, class B randomizes it, with a
- *                   fixed peer point.  This covers geryon's added handling (the
- *                   clamp and the constant-time weak-key check on the DH output)
- *                   over the raw-primitive gate target in targets_gate448.c.
- *   - gy_xed448_sign: geryon's in-house XEd448 sign layer (nonce derivation from
+ * - gy_x448: the wrapper over the vendored ladder.  The SECRET is the scalar;
+ *            class A fixes it, class B randomizes it, with a fixed peer point.
+ *            This covers geryon's added handling (the clamp and the constant-
+ *            time weak-key check on the DH output) over the raw-primitive gate
+ *            target in targets_gate448.c.
+ * - gy_xed448_sign: geryon's in-house XEd448 sign layer (nonce derivation from
  *                   the secret key and the live Z, the Montgomery-to-Edwards
- *                   map, the scalar arithmetic).  The SECRET is the signing key;
- *                   class A fixes it, class B randomizes it, live Z each trial.
+ *                   map, the scalar arithmetic).  The SECRET is the signing
+ *                   key; class A fixes it, class B randomizes it, live Z each
+ *                   trial.
  *
  * Deliberately omitted, per the same principle: XEd448 VERIFY operates entirely
- * on public data (public key, message, signature), so it can leak no secret; and
- * the classical c448 X3DH responder adds no geryon-owned secret-dependent branch
- * beyond the X448 DH already covered here (unlike the hybrid responder, whose
- * ML-KEM implicit-rejection compare is a genuine secret-dependent constant-time
- * property timed by target_hybrid_x3dh).
+ * on public data (public key, message, signature), so it can leak no secret;
+ * and the classical c448 X3DH responder adds no geryon-owned secret-dependent
+ * branch beyond the X448 DH already covered here (unlike the hybrid responder,
+ * whose ML-KEM implicit-rejection compare is a genuine secret-dependent
+ * constant-time property timed by target_hybrid_x3dh).
  *
- * Both targets follow the D-GEN-10 rule: both classes do identical per-trial RNG
- * setup work, so only the secret VALUE differs between classes.
+ * Both targets follow the D-GEN-10 rule: both classes do identical per-trial
+ * RNG setup work, so only the secret VALUE differs between classes.
  */
 #include "dudect_target.h"
 
@@ -93,10 +94,11 @@ x448_run(const void *state)
 /* Named "x448_wrap": the raw-ladder gate target in targets_gate448.c already
  * owns "x448"; this one exercises geryon's gy_x448 wrapper (clamp + weak-key
  * check) rather than the vendored primitive directly. */
-/* reps_per_trial = 1: X448 is a heavy primitive (hundreds of X25519-equivalents),
- * so a single call per trial already dwarfs the timer granularity; repeating it
- * (as the fast x25519/kdf targets do) would only multiply a 1e6-sample run into
- * hours.  Matches target_hybrid_x3dh, the other heavy target. */
+/* reps_per_trial = 1: X448 is a heavy primitive (hundreds of
+ * X25519-equivalents), so a single call per trial already dwarfs the timer
+ * granularity; repeating it (as the fast x25519/kdf targets do) would only
+ * multiply a 1e6-sample run into hours.  Matches target_hybrid_x3dh, the other
+ * heavy target. */
 const struct gy_dudect_target target_x448_wrap = {
     "x448_wrap", x448_setup, x448_run, sizeof(struct x448_state), 1,
 };
@@ -108,8 +110,8 @@ struct xed448_state {
     uint8_t msg[32];
 };
 
-/* A single fixed draw of random-looking bytes for the class-A key (same Hamming-
- * weight rationale as the X448 scalar and the 25519 XEdDSA target). */
+/* A single fixed draw of random-looking bytes for the class-A key (same
+ * Hamming- weight rationale as the X448 scalar and the 25519 XEdDSA target). */
 static const uint8_t xed448_fixed_sk[56] = {
     0x2d, 0x74, 0xc1, 0xe6, 0x93, 0x0b, 0xd8, 0x57, 0xbf, 0x1a, 0x3c, 0xc9,
     0x7e, 0x25, 0x60, 0xf1, 0x8d, 0x36, 0xab, 0x50, 0xe2, 0x09, 0x47, 0xcd,
@@ -144,7 +146,8 @@ xed448_run(const void *state)
 }
 
 /* reps_per_trial = 1: XEd448 sign (SHA-512 + a scalar mult) is likewise heavy;
- * one call per trial is well above timer granularity.  See the x448_wrap note. */
+ * one call per trial is well above timer granularity.  See the x448_wrap note.
+ */
 const struct gy_dudect_target target_xed448_sign = {
     "xed448_sign", xed448_setup, xed448_run, sizeof(struct xed448_state), 1,
 };

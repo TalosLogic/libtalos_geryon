@@ -38,16 +38,17 @@
  * credential protecting the embedded kekprot wrap blob, matching the
  * envelope hierarchy's own trust boundary.
  *
- * The bootstrap then appends the KEK-sealed identity/prekey material (gy_cust_idmat,
- * sealed as raw struct bytes under a distinct AD tag) immediately after the
- * header in that SAME store_identity blob, written/read via the caller's RAW
- * app_store (never through gy_custodian.sealed_store, which assumes the
- * header has already been stripped).  Because gy_custodian_generate_identity
- * takes no credential (CUSTODY_SPEC section 12), and re-persisting the
- * header requires the wrap blob, create/open/change_credential cache the
- * CURRENT wrap blob in gy_custodian.wrap so any later call that must rewrite
- * the header (generate_identity, prekey/SAK persistence)
- * can do so without re-deriving the PDK.
+ * The bootstrap then appends the KEK-sealed identity/prekey material
+ * (gy_cust_idmat, sealed as raw struct bytes under a distinct AD tag)
+ * immediately after the header in that SAME store_identity blob, written/read
+ * via the caller's RAW app_store (never through gy_custodian.sealed_store,
+ * which assumes the header has already been stripped).  Because
+ * gy_custodian_generate_identity takes no credential (CUSTODY_SPEC section 12),
+ * and re-persisting the header requires the wrap blob,
+ * create/open/change_credential cache the CURRENT wrap blob in
+ * gy_custodian.wrap so any later call that must rewrite the header
+ * (generate_identity, prekey/SAK persistence) can do so without re-deriving the
+ * PDK.
  *
  * gy_custodian.sealed_store (gy_sealed_store_bind over ks and app_store) is
  * for every OTHER record/prekey/session blob (wired into gy_custodian.store,
@@ -170,15 +171,16 @@ struct gy_cust_sak {
 };
 
 /*
- * A held HYBRID application signing key (HYBRID_SPEC section on the hybrid SAK):
- * a dual-scheme signer (curve XEdDSA keypair kp PLUS an ML-DSA keypair
- * mldsa_pk/mldsa_sk), certified by the hybrid identity under BOTH schemes.  Per-
+ * A held HYBRID application signing key (HYBRID_SPEC section on the hybrid
+ * SAK): a dual-scheme signer (curve XEdDSA keypair kp PLUS an ML-DSA keypair
+ * mldsa_pk/mldsa_sk), certified by the hybrid identity under BOTH schemes. Per-
  * request signatures and the identity certificate are each an XEdDSA + ML-DSA
  * pair, verified together (both-or-abort), matching hybrid prekey signing; this
  * removes the one identity-signed artifact that would otherwise lack PQ
  * authentication in a hybrid suite.  kp.pub.pkid (over the curve public key) is
  * the slot key, as for a classical SAK.  identity_ed_sig / identity_mldsa_sig
- * cover appkey-cert info || curve_type || curve_pk || mldsa_pk || issued_at_be64
+ * cover appkey-cert info || curve_type || curve_pk || mldsa_pk ||
+ * issued_at_be64
  * || expiry_be64 || identity_pkid_be32 (see custodian.c). */
 struct gy_cust_hsak {
     struct gy_keypair kp;
@@ -245,9 +247,9 @@ struct gy_cust_hybrid_idmat {
     (GY_CUST_HYBRID_IDMAT_MAX + GY_SEAL_MAX_OVERHEAD)
 
 /*
- * The full store_identity payload: header || sealed identity material.  Sized to
- * the LARGER (hybrid) sealed material so the one open/persist buffer serves both
- * suite families; a classical custodian's blob is far smaller.
+ * The full store_identity payload: header || sealed identity material.  Sized
+ * to the LARGER (hybrid) sealed material so the one open/persist buffer serves
+ * both suite families; a classical custodian's blob is far smaller.
  */
 #define GY_CUST_BLOB_MAX (GY_CUST_HDR_MAX + GY_CUST_HYBRID_IDMAT_SEALED_MAX)
 
@@ -256,8 +258,8 @@ struct gy_custodian {
     struct gy_sealed_store ss;
     gy_store_callbacks app_store;    /* the caller's raw callbacks */
     gy_store_callbacks sealed_store; /* app_store wrapped over ks; for
-                                       * every record/prekey/session blob,
-                                       * not the bootstrap header */
+                                      * every record/prekey/session blob,
+                                      * not the bootstrap header */
     struct gy_store store; /* internal session/ store, wired to sealed_store */
 
     const struct gy_suite_desc *desc;
@@ -470,8 +472,9 @@ int gy_custodian_delete_prekey(struct gy_custodian *c, gy_key_handle h);
 /* ---- application signing key ------------------------------ */
 
 /*
- * Mint a fresh SAK (XEdDSA, classical suite only this milestone), certify it
- * with the identity key, seal, and persist.  c must be unlocked with an
+ * Mint a fresh SAK (signed by the identity: XEdDSA in classical suites, XEdDSA
+ * and ML-DSA in hybrid suites), certify it with the identity key, seal, and
+ * persist.  c must be unlocked with an
  * identity already generated and must NOT already hold a SAK (GY_ERR_STATE;
  * use gy_custodian_rotate_appkey to replace one).  expiry is a caller-chosen
  * absolute time bound (0 = no expiry); the library never reads a clock.

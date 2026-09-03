@@ -296,7 +296,8 @@ gy_opk_batch_parse(struct gy_public_key *out, size_t out_cap, size_t *n,
 
 /* ---- hybrid bundle / OPK batch (HYBRID_SPEC section 4/5) ---------------- */
 
-/* A hybrid public key (section 4.1): pkid || curve_type || curve_pk || mlkem_ek. */
+/* A hybrid public key (section 4.1): pkid || curve_type || curve_pk ||
+ * mlkem_ek. */
 static void
 put_hpub(uint8_t **p, const struct gy_hybrid_public_key *k, size_t cpl,
          size_t ekl)

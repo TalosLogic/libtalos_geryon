@@ -3,6 +3,43 @@
 Broad strokes per release. Architecture and rationale live in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+## [1.3.0] [2026-09-03]
+
+The complete library: adds the fourth and highest suite `geryon_h448_1024`
+(X448 + ML-KEM-1024, XEd448 + ML-DSA-87, SHA-512), so all four suites ship.
+This is geryon's highest security tier: category-5 post-quantum material paired
+with X448 so no component falls below X448's ~224-bit classical strength, CNSA
+2.0-aligned. Every change is additive over v1.2.0; the frozen ABI, wire format
+(`protocol_version` 0x01), and stored-blob formats are unchanged. As with every
+suite, a `geryon_h448_1024` identity never interoperates with any other suite:
+the suite is pinned per identity and there is no downgrade path.
+
+- **The h448_1024 hybrid tier.** ML-KEM-1024 and ML-DSA-87 (via liboqs) over the
+  X448 + XEd448 curve tier: X3DH mixes an ML-KEM-1024 secret into every DH, the
+  Double Ratchet mixes a fresh ML-KEM secret into each step, and prekeys are
+  dual-signed with XEd448 and ML-DSA-87 (both must verify). No protocol code is
+  suite-specific; the tier is a descriptor row plus the ML-KEM-1024 / ML-DSA-87
+  wrappers, validated against FIPS 203/204 ACVP vectors and the HYBRID_SPEC §11
+  known-answer suite instantiated at 448.
+
+- **Full 4x4 cross-suite rejection.** Every suite's bundle and initial message,
+  presented to every other suite's identity, is rejected before any
+  cryptographic processing, at the public API and at the parse seam, covering
+  the classical/hybrid boundary in both directions.
+
+- **Public buffer-size bounds for fixed-buffer consumers.** `include/geryon.h`
+  now exposes the sizes an application needs to size fixed buffers without the
+  runtime size-query: store buffers (`GY_STORE_IDENTITY_BLOB_MAX_{CLASSICAL,
+  HYBRID}`, `GY_STORE_RECORD_BLOB_MAX`), which have no size-query at all, and
+  the wire buffers (`GY_BUNDLE_MAX_*`, `GY_REGISTRATION_MAX_*`,
+  `GY_APPKEY_CERT_MAX_*`, `GY_APPKEY_SIG_MAX_*`, `GY_OPK_WIRE_MAX_*` with
+  `GY_OPK_BATCH_HDR`, `GY_MESSAGE_OVERHEAD_MAX_*`). They split classical vs
+  hybrid so a size/bandwidth-constrained classical deployment allocates far
+  less; the `_HYBRID` bound covers both hybrid tiers. Build-time and test-time
+  checks keep them ahead of the internal record model and wire formulas. A
+  supported suite now needs no custom store sizing; the reference in-memory
+  store and the worked example size themselves from these constants.
+
 ## [1.2.0] [2026-08-28]
 
 The classical high-security tier. Adds `geryon_c448` (X448 + XEd448, SHA-512):

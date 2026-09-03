@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * receive path: initiation and established-session round-trips
- * (geryon send -> geryon recv), base-key dedupe of a re-sent initial (D-SES-6.1,
- * one session / one plaintext / no double OPK burn), inactive-session
- * association with activation and the D-SES-6 session-order count, and the
- * uniform-failure rule (D-SES-6.2: garbage and a tampered frame yield the same
- * error, store untouched).  Alice is the send path; Bob is the receive path;
- * both run on their own persistent in-memory store.
+ * (geryon send -> geryon recv), base-key dedupe of a re-sent initial
+ * (D-SES-6.1, one session / one plaintext / no double OPK burn),
+ * inactive-session association with activation and the D-SES-6 session-order
+ * count, and the uniform-failure rule (D-SES-6.2: garbage and a tampered frame
+ * yield the same error, store untouched).  Alice is the send path; Bob is the
+ * receive path; both run on their own persistent in-memory store.
  */
 
 #include <string.h>

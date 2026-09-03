@@ -16,13 +16,14 @@
 
 #include "geryon.h"
 
-#define AS_MAX 32     /* record slots (users + devices + sessions) */
-#define AS_BLOB 32768 /* per-record blob capacity (holds a grown skip store) */
-/* Identity slot capacity: the custodian's bootstrap header plus sealed
- * identity/prekey material; comfortably above
- * custodian.h's GY_CUST_BLOB_MAX (~12.5KB), not tied to that internal
- * constant since apistore stays within include/geryon.h only. */
-#define AS_IDENTITY_BLOB 16384
+#define AS_MAX 32 /* record slots (users + devices + sessions) */
+/* Per-record and identity capacities come from the PUBLIC store-buffer bounds
+ * (include/geryon.h), so apistore stays a pure public-API consumer yet is
+ * correctly sized for every suite family.  The hybrid identity bound covers all
+ * suites (classical included), so one reference store serves the whole matrix.
+ */
+#define AS_BLOB GY_STORE_RECORD_BLOB_MAX
+#define AS_IDENTITY_BLOB GY_STORE_IDENTITY_BLOB_MAX_HYBRID
 
 struct as_rec {
     int in_use;

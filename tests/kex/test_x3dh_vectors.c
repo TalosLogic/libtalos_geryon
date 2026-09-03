@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * X3DH DH-stage oracle vectors (D-GEN-6).  Cross-checks geryon's
- * X3DH Diffie-Hellman stage (DH1..DH4, the X3DH specification, section 3) against libsignal's
- * X25519: for each synthetic handshake the descriptor dh op over the spec
- * pairing must reproduce the oracle's agreement.
+ * X3DH Diffie-Hellman stage (DH1..DH4, the X3DH specification, section 3)
+ * against libsignal's X25519: for each synthetic handshake the descriptor dh op
+ * over the spec pairing must reproduce the oracle's agreement.
  *
  * libsignal cannot emit the assembled SK or its KDF info string (see
  * docs/TEST_ORACLES.md and tools/oracles/x3dh_libsignal/), so the SK / F /

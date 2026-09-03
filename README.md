@@ -1,10 +1,10 @@
 # libtalos_geryon
 
 Clean-room C17 implementation of the Signal protocol (X3DH, Double Ratchet,
-Sesame, XEdDSA) with library-custodied keys, offering a classical suite and a
-post-quantum-hybrid suite. In the hybrid suite session security holds if
+Sesame, XEdDSA) with library-custodied keys, offering classical suites and
+post-quantum-hybrid suites. In the hybrid suites session security holds if
 EITHER the ECDH or the ML-KEM assumption survives, and offline deniability is
-preserved exactly as in the classical suite (no transcript signatures). The
+preserved exactly as in the classical suites (no transcript signatures). The
 hybrid design is geryon's own (see [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md)),
 not Signal's PQXDH. Protocol code is clean-room from the Signal specifications;
 primitives come from permissively-licensed libraries by preference. The public
@@ -22,18 +22,19 @@ scheme, hash, and KEM strength move together.
 | `geryon_c25519` | 0x01 | X25519 | XEdDSA | SHA-256 |
 | `geryon_h25519_512` | 0x02 | X25519 + ML-KEM-512 | XEdDSA + ML-DSA-44 | SHA-256 |
 | `geryon_c448` | 0x03 | X448 | XEd448 | SHA-512 |
-| `geryon_h448_1024` (reserved) | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
+| `geryon_h448_1024` | 0x04 | X448 + ML-KEM-1024 | XEd448 + ML-DSA-87 | SHA-512 |
 
 The classical suites provide **no** post-quantum confidentiality. The smallest
 (`geryon_c25519`) exists for size/bandwidth-constrained deployments (32-byte
 X25519 keys vs. ~1 KB of ML-KEM material); `geryon_c448` is the CNSA-aligned
 classical high-security tier (X448 + XEd448, SHA-512) for a larger classical
-security margin. The hybrid suite (`geryon_h25519_512`) mixes an ML-KEM secret
-into every X3DH DH and every Double Ratchet step, and dual-signs prekeys with
-XEdDSA and ML-DSA. Identities of different suites never interoperate; mixed
-deployments require distinct identities. Suite ID 0x04 (`geryon_h448_1024`) is
-reserved for a future 448-tier hybrid suite and is rejected before any
-cryptographic processing.
+security margin. The hybrid suites (`geryon_h25519_512` and, at the highest
+tier, `geryon_h448_1024`) mix an ML-KEM secret into every X3DH DH and every
+Double Ratchet step, and dual-sign prekeys with XEdDSA and ML-DSA; session
+security holds if either the ECDH or the KEM assumption survives. Identities of
+different suites never interoperate; the suite is pinned per identity, there is
+no downgrade path, and a cross-suite object is rejected before any cryptographic
+processing. All four suites ship as of v1.3.0.
 
 ## Using the library
 
@@ -127,11 +128,11 @@ cmake --build build
 
 Dependencies are vendored as pinned submodules under `third_party/`:
 libsodium 1.0.22 (classical primitives, built via ExternalProject), liboqs
-0.16.0 (ML-KEM and ML-DSA for the hybrid suite, built via ExternalProject),
+0.16.0 (ML-KEM and ML-DSA for the hybrid suites, built via ExternalProject),
 libdecaf/ed448-goldilocks v1.0.3 (X448 and the 448 field/scalar/point
-primitives for the `geryon_c448` suite, the 448 C-source slice compiled
-directly), and monocypher 4.0.3 (compiled directly). All four are permissively
-licensed.
+primitives for the 448-tier suites `geryon_c448` and `geryon_h448_1024`, the
+448 C-source slice compiled directly), and monocypher 4.0.3 (compiled
+directly). All four are permissively licensed.
 
 ### Sanitizers
 
@@ -187,7 +188,7 @@ cmake --build build --target format-check
 
 - [docs/DESIGN.md](docs/DESIGN.md) - whole-system design overview.
 - [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md) - the normative specification for
-  the hybrid suite (geryon's own PQ-hybrid design).
+  the hybrid suites (geryon's own PQ-hybrid design).
 - [docs/PQ_COMPARISON.md](docs/PQ_COMPARISON.md) - the hybrid design rationale
   against Signal's PQ approach.
 - [CHANGELOG.md](CHANGELOG.md) - broad strokes per release.

@@ -25,17 +25,23 @@
  * CLIENT_*_MAX values; the extra static storage is harmless for the classical
  * demo.
  */
-#define COORD_REG_MAX 16384
-#define COORD_BATCH_MAX 16384
-#define COORD_BUNDLE_MAX 8192
+/* Caps derived from the library's public wire bounds (include/geryon.h), using
+ * the _HYBRID family so the shared coordinator serves every demo suite.  It
+ * relays byte blobs of a length it checks, so a little headroom is harmless. */
+#define COORD_MAX_PLAINTEXT 4096 /* mirrors the client payload ceiling */
+#define COORD_MAX_RELAY_OPKS 16  /* headroom over a client's minted batch */
+#define COORD_REG_MAX GY_REGISTRATION_MAX_HYBRID
+#define COORD_BATCH_MAX                                                        \
+    (GY_OPK_BATCH_HDR + COORD_MAX_RELAY_OPKS * GY_OPK_WIRE_MAX_HYBRID)
+#define COORD_BUNDLE_MAX GY_BUNDLE_MAX_HYBRID
 #define COORD_MAX_CONSUMED 128
 
 /* Mailbox bounds and the seeded out-of-order delivery schedule. */
 #define COORD_MAILBOX_MAX 8
-#define COORD_MSG_MAX 8192
+#define COORD_MSG_MAX (GY_MESSAGE_OVERHEAD_MAX_HYBRID + COORD_MAX_PLAINTEXT)
 
 /* Published SAK certificate (hybrid: ML-DSA public key plus dual signature). */
-#define COORD_CERT_MAX 8192
+#define COORD_CERT_MAX GY_APPKEY_CERT_MAX_HYBRID
 
 /* Published self-fingerprint; GY_FINGERPRINT_MAX bounds it. */
 #define COORD_FP_MAX 64

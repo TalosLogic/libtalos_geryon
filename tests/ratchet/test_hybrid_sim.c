@@ -11,6 +11,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "gy_sim.h"
@@ -26,7 +27,8 @@ TEST(handshake_confirm_reply)
 {
     struct gy_sim_hybrid bob;
     struct gy_sim_hybrid_initiator alice;
-    uint8_t msg[GY_SIM_HYBRID_MSG_MAX], reply[4096], o1[64], o2[64];
+    uint8_t msg[GY_SIM_HYBRID_MSG_MAX], reply[GY_SIM_HYBRID_MSG_MAX], o1[64],
+        o2[64];
     size_t ml, rl, l1, l2;
 
     ASSERT_EQ(gy_sim_hybrid_setup(&bob, D, AEAD, 3, 1), GY_OK);
@@ -38,6 +40,13 @@ TEST(handshake_confirm_reply)
         GY_OK);
     ASSERT_EQ(l1, 2);
     ASSERT_MEMEQ(o1, "hi", 2);
+
+    /* AD_first = 2*hash_len + 4 (section 6.7), pinned per hybrid tier:
+     * 68 at h25519_512, 132 at h448_1024.  Both parties agree (the reply's
+     * AEAD verifies against the initiator's AD). */
+    ASSERT_EQ(alice.adl,
+              D->curve_type == GY_CURVE_TYPE_448 ? (size_t)132 : (size_t)68);
+    ASSERT_EQ(bob.adl, alice.adl);
 
     /* Bob replies on his first sending chain, carrying the KEM confirmation. */
     ASSERT_EQ(gy_hybrid_dr_encrypt(&bob.bob_dr, reply, sizeof(reply), &rl,
@@ -88,7 +97,8 @@ TEST(confirm_ct_tamper)
 {
     struct gy_sim_hybrid bob;
     struct gy_sim_hybrid_initiator alice;
-    uint8_t msg[GY_SIM_HYBRID_MSG_MAX], reply[4096], o1[64], o2[64];
+    uint8_t msg[GY_SIM_HYBRID_MSG_MAX], reply[GY_SIM_HYBRID_MSG_MAX], o1[64],
+        o2[64];
     size_t ml, rl, l1, l2;
 
     ASSERT_EQ(gy_sim_hybrid_setup(&bob, D, AEAD, 1, 1), GY_OK);
@@ -141,19 +151,25 @@ TEST(replayed_initial_deduped)
 int
 main(void)
 {
+    /* The whole file is descriptor-generic; run it for each hybrid tier. */
+    static const uint8_t suites[] = {GY_SUITE_H25519_512, GY_SUITE_H448_1024};
+    static const struct gy_test_case cases[] = {
+        GY_TEST(handshake_confirm_reply),
+        GY_TEST(initial_tamper_matrix),
+        GY_TEST(confirm_ct_tamper),
+        GY_TEST(replayed_initial_deduped),
+    };
+    size_t s;
+    int rc = 0;
+
     if (gy_core_init() != GY_OK)
         return 1;
-    D = gy_suite_desc(GY_SUITE_H25519_512);
-    if (D == NULL)
-        return 1;
-
-    {
-        static const struct gy_test_case cases[] = {
-            GY_TEST(handshake_confirm_reply),
-            GY_TEST(initial_tamper_matrix),
-            GY_TEST(confirm_ct_tamper),
-            GY_TEST(replayed_initial_deduped),
-        };
-        return gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
+    for (s = 0; s < sizeof(suites) / sizeof(suites[0]); s++) {
+        D = gy_suite_desc(suites[s]);
+        if (D == NULL)
+            return 1;
+        printf("== suite %s ==\n", D->name);
+        rc |= gy_test_run(cases, sizeof(cases) / sizeof(cases[0]));
     }
+    return rc;
 }

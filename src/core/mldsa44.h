@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-#ifndef GY_MLDSA_H
-#define GY_MLDSA_H
+#ifndef GY_MLDSA44_H
+#define GY_MLDSA44_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -23,23 +23,27 @@
  * passes INFO("prekey").  Signing and verification always go through the
  * with_ctx_str entry points, never the bare ones.
  *
- * The h25519_512 suite uses ML-DSA-44; the 448 tier uses ML-DSA-87 and gets its
- * own wrapper.  Sizes are exposed for stack buffers; the kex/ratchet layers
- * size against the suite-descriptor dsa_* fields (D-GEN-7), never these macros.
+ * Parameter sets are separate wrappers, one file each, exactly as x25519.c and
+ * x448.c are (D-PQ-3): the h25519_512 suite uses this ML-DSA-44 wrapper; the
+ * 448 tier uses ML-DSA-87 in mldsa87.c.  Sizes are exposed for stack buffers;
+ * the kex/ratchet layers size against the suite-descriptor dsa_* fields
+ * (D-GEN-7), never these macros.
  */
 
 #define GY_MLDSA44_PK 1312  /* public (verifying) key */
 #define GY_MLDSA44_SK 2560  /* secret (signing) key */
 #define GY_MLDSA44_SIG 2420 /* signature (fixed length) */
 
-/* FIPS 204 caps the context string at 255 bytes. */
+/* FIPS 204 caps the context string at 255 bytes; parameter-set-independent. */
+#ifndef GY_MLDSA_CTX_MAX
 #define GY_MLDSA_CTX_MAX 255
+#endif
 
 /*
  * Generate an ML-DSA-44 keypair.  pk is public, sk is secret; sk is zeroized if
  * the provider fails.  Returns GY_OK or a negative GY_ERR_*.
  */
-int gy_mldsa_keypair(uint8_t *pk, uint8_t *sk);
+int gy_mldsa44_keypair(uint8_t *pk, uint8_t *sk);
 
 /*
  * Sign msg[0..mlen) under sk with context ctx[0..ctxlen), writing the 2420-byte
@@ -49,8 +53,8 @@ int gy_mldsa_keypair(uint8_t *pk, uint8_t *sk);
  * follows the library sign convention (sig, key, msg, msg_len, ...), matching
  * gy_xeddsa_sign and the descriptor sign/dsa_sign slots.
  */
-int gy_mldsa_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
-                  size_t mlen, const uint8_t *ctx, size_t ctxlen);
+int gy_mldsa44_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
+                    size_t mlen, const uint8_t *ctx, size_t ctxlen);
 
 /*
  * Verify the 2420-byte signature sig over msg[0..mlen) under pk with context
@@ -59,7 +63,7 @@ int gy_mldsa_sign(uint8_t *sig, const uint8_t *sk, const uint8_t *msg,
  * empty vs nonempty) is a verification failure, which is how D-PQ-1 makes the
  * context load-bearing.
  */
-int gy_mldsa_verify(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg,
-                    size_t mlen, const uint8_t *ctx, size_t ctxlen);
+int gy_mldsa44_verify(const uint8_t *sig, const uint8_t *pk, const uint8_t *msg,
+                      size_t mlen, const uint8_t *ctx, size_t ctxlen);
 
-#endif /* GY_MLDSA_H */
+#endif /* GY_MLDSA44_H */

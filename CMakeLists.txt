@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(libtalos_geryon
-    VERSION 1.2.0
+    VERSION 1.3.0
     LANGUAGES C
 )
 
@@ -388,7 +388,7 @@ target_compile_options(geryon_core PRIVATE ${GERYON_WARNINGS})
 # with GY_TEST_HOOKS. The two macros together are a hard #error.
 target_compile_definitions(geryon_core PRIVATE GY_PRODUCTION_BUILD)
 # PUBLIC: core's public headers include these deps' headers (hash.h -> sodium.h,
-# mlkem.h/mldsa.h -> oqs/oqs.h), so their include dirs must propagate up the
+# mlkem*/mldsa*.h -> oqs/oqs.h), so their include dirs must propagate up the
 # layer chain to any source that transitively includes a core header. Linking is
 # also propagated, which is harmless for static archives (final executables link
 # them anyway). PRIVATE only appeared to work where a system libsodium/liboqs
