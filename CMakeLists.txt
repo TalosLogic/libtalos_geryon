@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(libtalos_geryon
-    VERSION 1.3.0
+    VERSION 1.4.0
     LANGUAGES C
 )
 
@@ -232,7 +232,9 @@ message(STATUS "libdecaf448: p448 target arch = ${DECAF_ARCH}")
 file(MAKE_DIRECTORY
     "${DECAF_GEN}/include/decaf"
     "${DECAF_GEN}/c/p448"
-    "${DECAF_GEN}/c/ed448goldilocks")
+    "${DECAF_GEN}/c/ed448goldilocks"
+    "${DECAF_GEN}/c/p25519"
+    "${DECAF_GEN}/c/curve25519")
 
 set(DECAF_GENERATED "")
 
@@ -299,6 +301,33 @@ decaf_generate("c/ed448goldilocks/elligator.c" curve ed448goldilocks "ed448goldi
 decaf_generate("c/ed448goldilocks/eddsa.c"     curve ed448goldilocks "ed448goldilocks/eddsa.c"
     "per_curve/eddsa.tmpl.c")
 
+# curve25519 / p25519 slice. Required because the embedded libtalos_schnorr
+# reaches raw decaf_255 group ops for EncodeToG-255 (the Elligator inverse;
+# libsodium's ristretto255 exposes only the one-way from_hash). With
+# USE_EXTERNAL_DECAF, geryon owns the whole decaf schnorr links, so the parent's
+# 448 target must carry curve25519 too (schnorr reuses it for the 255 tier).
+# GER-M8-02. Generated internal p25519 field header + generic source:
+decaf_generate("c/p25519/f_field.h"   field p25519 "p25519/f_field.h"
+    "per_field/f_field.tmpl.h")
+decaf_generate("c/p25519/f_generic.c" field p25519 "p25519/f_generic.c"
+    "per_field/f_generic.tmpl.c")
+
+# The generated curve25519/decaf.c #includes <decaf/ed255.h>, so it is generated
+# even though geryon uses libsodium for Ed25519 (the decaf ed255 code links only
+# as referenced).
+decaf_generate("include/decaf/ed255.h" curve curve25519 "decaf/ed255.h"
+    "per_curve/eddsa.tmpl.h")
+
+# Generated curve25519 curve sources.
+decaf_generate("c/curve25519/scalar.c"    curve curve25519 "curve25519/scalar.c"
+    "per_curve/scalar.tmpl.c")
+decaf_generate("c/curve25519/decaf.c"     curve curve25519 "curve25519/decaf.c"
+    "per_curve/decaf.tmpl.c")
+decaf_generate("c/curve25519/elligator.c" curve curve25519 "curve25519/elligator.c"
+    "per_curve/elligator.tmpl.c")
+decaf_generate("c/curve25519/eddsa.c"     curve curve25519 "curve25519/eddsa.c"
+    "per_curve/eddsa.tmpl.c")
+
 add_custom_target(decaf448_generate DEPENDS ${DECAF_GENERATED})
 
 # The 448 source slice. Static (checked-in) sources come from the submodule
@@ -328,7 +357,52 @@ set_source_files_properties(
     "${DECAF_GEN}/c/ed448goldilocks/eddsa.c"
     PROPERTIES GENERATED 1)
 
-add_library(decaf448 STATIC ${DECAF_448_SOURCES})
+# curve25519 / p25519 object slices, folded into the decaf448 archive below so
+# the single geryon decaf target carries BOTH curves (see the schnorr var block
+# after add_subdirectory: USE_EXTERNAL_DECAF, no separate 255 target). These are
+# SEPARATE object libraries with their own include path because p448/f_field.h
+# and p25519/f_field.h share a name and cannot coexist on one target's includes;
+# upstream libdecaf and schnorr's cmake/decaf_slice.cmake mirror this. GER-M8-02.
+set(DECAF_255_FIELD_INC
+    "${DECAF_SRC}/src/include"
+    "${DECAF_SRC}/src/include/${DECAF_ARCH}"
+    "${DECAF_SRC}/src/p25519"
+    "${DECAF_SRC}/src/p25519/${DECAF_ARCH}"
+    "${DECAF_GEN}/c/p25519"
+    "${DECAF_GEN}/c/curve25519"
+    "${DECAF_GEN}/include"
+)
+set_source_files_properties(
+    "${DECAF_GEN}/c/p25519/f_generic.c"
+    "${DECAF_GEN}/c/curve25519/scalar.c"
+    "${DECAF_GEN}/c/curve25519/decaf.c"
+    "${DECAF_GEN}/c/curve25519/elligator.c"
+    "${DECAF_GEN}/c/curve25519/eddsa.c"
+    PROPERTIES GENERATED 1)
+
+add_library(decaf_p25519 OBJECT
+    "${DECAF_SRC}/src/p25519/${DECAF_ARCH}/f_impl.c"
+    "${DECAF_SRC}/src/p25519/f_arithmetic.c"
+    "${DECAF_GEN}/c/p25519/f_generic.c")
+add_dependencies(decaf_p25519 decaf448_generate)
+set_target_properties(decaf_p25519 PROPERTIES POSITION_INDEPENDENT_CODE True)
+target_compile_options(decaf_p25519 PRIVATE -w)
+target_include_directories(decaf_p25519 PRIVATE ${DECAF_255_FIELD_INC})
+
+add_library(decaf_curve25519 OBJECT
+    "${DECAF_SRC}/src/curve25519/decaf_tables.c"
+    "${DECAF_GEN}/c/curve25519/scalar.c"
+    "${DECAF_GEN}/c/curve25519/decaf.c"
+    "${DECAF_GEN}/c/curve25519/elligator.c"
+    "${DECAF_GEN}/c/curve25519/eddsa.c")
+add_dependencies(decaf_curve25519 decaf448_generate)
+set_target_properties(decaf_curve25519 PROPERTIES POSITION_INDEPENDENT_CODE True)
+target_compile_options(decaf_curve25519 PRIVATE -w)
+target_include_directories(decaf_curve25519 PRIVATE ${DECAF_255_FIELD_INC})
+
+add_library(decaf448 STATIC ${DECAF_448_SOURCES}
+    $<TARGET_OBJECTS:decaf_p25519>
+    $<TARGET_OBJECTS:decaf_curve25519>)
 add_dependencies(decaf448 decaf448_generate)
 set_target_properties(decaf448 PROPERTIES POSITION_INDEPENDENT_CODE True)
 # third_party code is not held to geryon's warning bar (same as monocypher).
@@ -479,6 +553,103 @@ target_link_libraries(geryon INTERFACE geryon_proto)
 target_include_directories(geryon INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/include")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/geryon.h" DESTINATION include)
+
+# -----------------------------------------------------------------------------
+# libtalos_schnorr: the mandatory group-element provider for the classical group
+# vertical (D-GRP-1), so it is a normal part of the build, not an option. It
+# consumes geryon's C-only decaf slice (decaf448) and libsodium (sodium)
+# instead of building its own, so there is no second copy of either (the
+# libsodium target even shares the name `sodium`) and no libstdc++ from
+# ed448goldilocks's C++-bearing decaf-static. Both sides pin the same
+# ed448goldilocks (v1.0.3). Cache vars set with FORCE before add_subdirectory so
+# schnorr's option()/set() pick them up. EXCLUDE_FROM_ALL: configured now,
+# compiled once the group layer links talos_schnorr (no consumer exists yet).
+#
+# decaf448 now carries BOTH curves (p448/ed448goldilocks AND p25519/curve25519,
+# folded in above), so schnorr reuses this one target for both tiers: the 448
+# tier and, for EncodeToG-255, the raw decaf_255 group ops. That is why
+# USE_EXTERNAL_DECAF255 is left OFF (schnorr defaults its 255 provider to the
+# 448 target) and no separate decaf255 target is provided.
+# -----------------------------------------------------------------------------
+set(TALOS_SCHNORR_USE_EXTERNAL_SODIUM ON       CACHE BOOL   "" FORCE)
+set(TALOS_SCHNORR_SODIUM_TARGET       sodium   CACHE STRING "" FORCE)
+set(TALOS_SCHNORR_USE_EXTERNAL_DECAF  ON       CACHE BOOL   "" FORCE)
+set(TALOS_SCHNORR_DECAF_TARGET        decaf448 CACHE STRING "" FORCE)
+set(TALOS_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(TALOS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/libtalos_schnorr EXCLUDE_FROM_ALL)
+
+# -----------------------------------------------------------------------------
+# geryon_group static library: the classical private-group vertical (M8,
+# GROUP_SPEC), a PARALLEL VERTICAL (D-GRP-2), NOT part of the Layer 1-5 messaging
+# stack. It composes the [CPZ] protocol clean-room over the libtalos_schnorr
+# group-element provider (D-GRP-1) and reuses geryon_core for HKDF/HMAC/rng and
+# the suite descriptor (GROUP_SPEC section 2.3). EXCLUDE_FROM_ALL: opt-in by
+# linking it, never a compile-time flag (groups-separate-target, D-QGS-1); it is
+# compiled when a consumer or its tests link it.
+# -----------------------------------------------------------------------------
+# Client / server / common role split (GER-M8-07, GROUP_SPEC section 8.3): the
+# group vertical ships as TWO facades over shared internals so a client binary
+# contains no issuance code or any path consuming ServerSecretParams. The split
+# is STRUCTURAL (separate translation units, verified by tests/audit/
+# nm_scope_server.sh), not documentary:
+#   - COMMON (geryon_group_internal): the sk-free shared layer - proof-statement
+#     assembly (group_stmt), the object wire encode/decode, and the section 2
+#     parameter/hash/tier/attribute/verifiable-encryption foundation. One static
+#     archive both facades link, so a binary linking both (e.g. the tests) gets a
+#     single copy and no duplicate symbols.
+#   - CLIENT (geryon_group): the member-side operations and credential/
+#     presentation proving. Never consumes ServerSecretParams.
+#   - SERVER (geryon_groups_server): the five section 8.1 ServerSecretParams
+#     operations (KeyGen/iparams, issuance, blind issuance, and the two
+#     presentation verifications). A separate target, never linked into a client.
+set(GERYON_GROUP_COMMON_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_stmt.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_wire.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_params.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_hash.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_tier.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_attr.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_venc.c")
+set(GERYON_GROUP_CLIENT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_ops.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_state.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_cred_client.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_pres_client.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_issue_client.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_facade_client.c")
+set(GERYON_GROUP_SERVER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_cred_server.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_pres_server.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_issue_server.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_mac_server.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group/group_facade_server.c")
+
+# Common internals. geryon_core: HKDF/HMAC/rng/util plus gy_info / gy_suite_desc
+# (GROUP_SPEC section 2.3). talos_schnorr: the group-element provider (D-GRP-1).
+# PUBLIC linkage propagates the include dirs to both facades.
+add_library(geryon_group_internal STATIC EXCLUDE_FROM_ALL
+    ${GERYON_GROUP_COMMON_SOURCES})
+target_include_directories(geryon_group_internal PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/group"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_options(geryon_group_internal PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_group_internal PRIVATE GY_PRODUCTION_BUILD)
+target_link_libraries(geryon_group_internal PUBLIC geryon_core talos_schnorr)
+
+add_library(geryon_group STATIC EXCLUDE_FROM_ALL ${GERYON_GROUP_CLIENT_SOURCES})
+target_compile_options(geryon_group PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_group PRIVATE GY_PRODUCTION_BUILD)
+# geryon_proto: the client facade extends the custodian (custodian.h + its
+# transitive proto/session/core include dirs). A group client is a messaging
+# client, so this coupling is by design; the SERVER target links neither.
+target_link_libraries(geryon_group PUBLIC geryon_group_internal geryon_proto)
+
+add_library(geryon_groups_server STATIC EXCLUDE_FROM_ALL
+    ${GERYON_GROUP_SERVER_SOURCES})
+target_compile_options(geryon_groups_server PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_groups_server PRIVATE GY_PRODUCTION_BUILD)
+target_link_libraries(geryon_groups_server PUBLIC geryon_group_internal)
 
 # -----------------------------------------------------------------------------
 # Tests: driven by tests/CMakeLists.txt, which builds each tests/core/test_*.c

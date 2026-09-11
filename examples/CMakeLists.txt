@@ -71,3 +71,30 @@ set_tests_properties(h448_1024_demo_fault PROPERTIES
 add_test(NAME demo_include_check
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/demo_headers_check.sh"
                "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# -----------------------------------------------------------------------------
+# The GROUP worked example: a multi-process (GRP_NMEMBERS members + an untrusted
+# coordinator-server) lifecycle over the PUBLIC group API (geryon_group.h /
+# geryon_group_server.h) with real pairwise M0-M7 sessions.  Reuses the pure
+# infra (demo_ipc.c, filestore.c) from the messaging demo; all group-specific
+# code lives in its own sources.  One binary per classical tier.
+set(GERYON_GROUP_DEMO_COMMON_SRC
+    group_demo_driver.c
+    group_coordinator.c
+    group_client.c
+    demo_ipc.c
+    filestore.c)
+
+add_executable(geryon_group_demo group_demo_main.c ${GERYON_GROUP_DEMO_COMMON_SRC})
+target_link_libraries(geryon_group_demo PRIVATE
+    geryon geryon_group geryon_groups_server)
+target_compile_options(geryon_group_demo PRIVATE ${GERYON_WARNINGS})
+
+add_executable(geryon_group_c448_demo group_demo_c448_main.c
+    ${GERYON_GROUP_DEMO_COMMON_SRC})
+target_link_libraries(geryon_group_c448_demo PRIVATE
+    geryon geryon_group geryon_groups_server)
+target_compile_options(geryon_group_c448_demo PRIVATE ${GERYON_WARNINGS})
+
+add_test(NAME group_demo COMMAND geryon_group_demo)
+add_test(NAME group_c448_demo COMMAND geryon_group_c448_demo)

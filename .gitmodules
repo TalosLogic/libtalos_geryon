@@ -10,3 +10,6 @@
 [submodule "third_party/ed448goldilocks-code"]
 	path = third_party/ed448goldilocks-code
 	url = git://git.code.sf.net/p/ed448goldilocks/code
+[submodule "third_party/libtalos_schnorr"]
+	path = third_party/libtalos_schnorr
+	url = https://github.com/TalosLogic/libtalos_schnorr.git

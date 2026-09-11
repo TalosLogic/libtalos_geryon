@@ -15,10 +15,13 @@ add_executable(geryon_dudect
     targets_he.c
     targets_gate448.c
     targets_c448.c
+    targets_group.c
+    targets_group_server.c
     dudect_main.c
 )
 target_include_directories(geryon_dudect PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}")
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/src/group")
 target_compile_options(geryon_dudect PRIVATE ${GERYON_WARNINGS})
 # targets_gate448.c includes external libdecaf headers (via decaf448), which are
 # not held to geryon's -Werror bar; relax just that one TU.
@@ -33,6 +36,12 @@ target_link_libraries(geryon_dudect PRIVATE geryon_ratchet sodium monocypher oqs
 # decaf448 backs the raw-primitive X448 timing target (targets_gate448.c);
 # it does not propagate through geryon_ratchet (linked PRIVATE into geryon_core).
 target_link_libraries(geryon_dudect PRIVATE decaf448)
+# geryon_group backs the section 6 ProfileKey-decrypt CT target
+# (targets_group.c); it is a separate vertical (EXCLUDE_FROM_ALL) and pulls in
+# talos_schnorr, so link it explicitly. geryon_groups_server backs the section
+# 8.4 secret-keyed server targets (targets_group_server.c: issuance, blind
+# issuance, presentation-verify Z-recompute).
+target_link_libraries(geryon_dudect PRIVATE geryon_group geryon_groups_server)
 add_dependencies(geryon_dudect liboqs_build)
 if(NOT APPLE)
     target_link_libraries(geryon_dudect PRIVATE m)

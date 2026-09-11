@@ -38,19 +38,27 @@ static const uint8_t B_DID[4] = {0xB2, 0x0D, 0x0D, 0x0D};
 static const uint8_t PARTY_CRED[] = "test party credential";
 
 static void
-party_up(struct party *p, const uint8_t *uid, const uint8_t *did,
-         gy_clock_fn clock, void *cctx, const gy_config *cfg)
+party_up_suite(struct party *p, uint8_t suite, const uint8_t *uid,
+               const uint8_t *did, gy_clock_fn clock, void *cctx,
+               const gy_config *cfg)
 {
     as_bind(&p->st, &p->cb);
     p->uid = uid;
     p->ul = 4;
     p->did = did;
     p->dl = 4;
-    ASSERT_EQ(gy_custodian_create(&p->c, GY_SUITE_C25519, &p->cb, PARTY_CRED,
+    ASSERT_EQ(gy_custodian_create(&p->c, suite, &p->cb, PARTY_CRED,
                                   sizeof(PARTY_CRED) - 1, uid, 4, did, 4, clock,
                                   cctx, cfg),
               GY_OK);
     ASSERT_EQ(gy_custodian_generate_identity(p->c, 1000, 4), GY_OK);
+}
+
+static void
+party_up(struct party *p, const uint8_t *uid, const uint8_t *did,
+         gy_clock_fn clock, void *cctx, const gy_config *cfg)
+{
+    party_up_suite(p, GY_SUITE_C25519, uid, did, clock, cctx, cfg);
 }
 
 static void
@@ -75,8 +83,8 @@ static size_t
 p_initiate(struct party *from, struct party *to, const uint8_t *pt,
            size_t ptlen, uint8_t *msg)
 {
-    uint8_t bundle[1024];
-    size_t blen, mlen = 2048;
+    uint8_t bundle[8192]; /* sized for the larger hybrid bundle too */
+    size_t blen, mlen = 8192;
 
     blen = party_bundle(to, bundle);
     ASSERT_EQ(gy_send_open(from->c), GY_OK);
@@ -91,7 +99,7 @@ static size_t
 p_encrypt(struct party *from, struct party *to, const uint8_t *pt, size_t ptlen,
           uint8_t *msg)
 {
-    size_t mlen = 2048;
+    size_t mlen = 8192;
 
     ASSERT_EQ(gy_send_open(from->c), GY_OK);
     ASSERT_EQ(gy_encrypt(from->c, to->uid, to->ul, to->did, to->dl, pt, ptlen,
@@ -256,6 +264,52 @@ TEST(key_change_then_accept)
     ASSERT_TRUE(memcmp(chg.old_fp, chg.new_fp, chg.fp_len) != 0, "fps differ");
 
     /* Accept the new key, then the fresh initiation succeeds and delivers. */
+    ASSERT_EQ(gy_accept_identity(g_a.c, B_UID, 4, B_DID, 4, bundle2, b2len),
+              GY_OK);
+    ml = p_initiate(&g_a, &g_b2, p1, sizeof(p1), m);
+    ASSERT_EQ(p_recv(&g_b2, &g_a, m, ml, out, &ol), GY_OK);
+    ASSERT_TRUE(memcmp(out, p1, ol) == 0, "post-accept message");
+
+    party_down(&g_a);
+    party_down(&g_b);
+    party_down(&g_b2);
+}
+
+/*
+ * The same mid-conversation key change under a HYBRID suite: a reinstalled peer
+ * (same UserID/DeviceID, new hybrid identity) must surface GY_ERR_KEY_CHANGED and
+ * be acceptable via gy_accept_identity, exactly as in the classical case.  This
+ * catches gy_accept_identity failing to dispatch to the hybrid device-record
+ * path (it would otherwise load a classical record that does not exist and
+ * return GY_ERR_STATE).  Buffers are sized for the larger hybrid bundle/message.
+ */
+TEST(key_change_then_accept_hybrid)
+{
+    uint8_t m[8192], out[256], bundle2[8192];
+    size_t ml, ol, b2len;
+    gy_keychange chg;
+    uint8_t p0[3] = "k1", p1[3] = "k2";
+
+    party_up_suite(&g_a, GY_SUITE_H25519_512, A_UID, A_DID, NULL, NULL, NULL);
+    party_up_suite(&g_b, GY_SUITE_H25519_512, B_UID, B_DID, NULL, NULL, NULL);
+    ml = p_initiate(&g_a, &g_b, p0, sizeof(p0), m);
+    ASSERT_EQ(p_recv(&g_b, &g_a, m, ml, out, &ol), GY_OK);
+
+    /* A second Bob hybrid identity on the same UserID/DeviceID: a key change. */
+    party_up_suite(&g_b2, GY_SUITE_H25519_512, B_UID, B_DID, NULL, NULL, NULL);
+    b2len = party_bundle(&g_b2, bundle2);
+
+    ASSERT_EQ(gy_send_open(g_a.c), GY_OK);
+    ml = sizeof(m);
+    memset(&chg, 0, sizeof(chg));
+    ASSERT_EQ(gy_initiate(g_a.c, B_UID, 4, B_DID, 4, bundle2, b2len, p1,
+                          sizeof(p1), &chg, m, &ml),
+              GY_ERR_KEY_CHANGED);
+    gy_rollback(g_a.c);
+    ASSERT_TRUE(chg.fp_len > 0, "key-change fingerprints surfaced");
+    ASSERT_TRUE(memcmp(chg.old_fp, chg.new_fp, chg.fp_len) != 0, "fps differ");
+
+    /* Accept the new hybrid key, then the fresh initiation succeeds. */
     ASSERT_EQ(gy_accept_identity(g_a.c, B_UID, 4, B_DID, 4, bundle2, b2len),
               GY_OK);
     ml = p_initiate(&g_a, &g_b2, p1, sizeof(p1), m);
@@ -441,6 +495,7 @@ main(void)
         GY_TEST(replay_rejected),
         GY_TEST(racing_initiation_converges),
         GY_TEST(key_change_then_accept),
+        GY_TEST(key_change_then_accept_hybrid),
         GY_TEST(orphan_reinitiate),
         GY_TEST(compromise_purge_and_readd),
         GY_TEST(counter_expiration),

@@ -49,6 +49,27 @@ Regenerating any vector file requires updating the corresponding row here
   behavior and by the integration and property tests that drive
   `include/geryon.h` end to end (`tests/api/`). libsignal's Sesame behavior is
   an INFORMATIVE reference only, never a linked or ported oracle.
+- **The classical group vertical (`geryon_group`) uses NO copyleft oracle.**
+  geryon's group KVAC/NIZK layer is clean-room and DELIBERATELY not
+  zkgroup-byte-compatible (D-GRP-4: own Fiat-Shamir transcript, SHA-512
+  challenge, domain separators, EncodeToG layout), so a zkgroup/poksho
+  byte-compat or interop cross-check is impossible by construction and D-GEN-6
+  forbids a compat parameterization. BOTH tiers are cross-checked by an
+  INDEPENDENT reimplementation of the [CPZ] verify equations + Fiat-Shamir
+  transcript (`tools/oracles/group_kvac/verify.py`), clean-room from the paper -
+  NOT a copyleft generator, so it is described below but not listed in the
+  licensing-boundary Oracles table. The oracle's independence is at the PROTOCOL
+  layer (transcript, equation layout, verify relation); the group arithmetic is
+  the same primitive geryon uses (255: libsodium ristretto255; 448: geryon's
+  vendored libdecaf via a byte-array shim), validated separately (RFC 9496;
+  RFC 7748/8032 and the libdecaf gate). Covering the 448 tier is not redundant:
+  its transcript differs from the 255 tier in hash (SHAKE256 vs SHA-512), width,
+  and reduction, and because geryon's prover and verifier share that transcript
+  code, a 448-transcript bug would verify against itself and is invisible both
+  to round-trips and to the 255 oracle. The statement-surface self-KATs
+  (`tests/group/test_group_stmt_vectors.c`, both tiers) and the round-trip
+  property tests remain the always-on checks; the oracle is the independent
+  structural cross-check.
 
 ## Oracles
 
@@ -133,3 +154,57 @@ Reproducibility notes:
 - Commit `tools/oracles/x3dh_libsignal/Cargo.lock` alongside the vectors.
 - Record the SHA-256 of the generated file here once it is committed:
   `sha256(x3dh_libsignal.vec) = 1018279214cd430f39820c00c314f09d9a3b62d6d1a6fc55cb3ab30888c51546`.
+
+## `group_kvac.vec` (D-GEN-6, independent-implementation cross-check)
+
+Validates the group credential proofs (pi_I, pi_A, pi_P, pi_BR, pi_BI;
+GROUP_SPEC sections 5.1-5.3) on BOTH tiers against an INDEPENDENT
+reimplementation of the [CPZ] verify equations and the sound-conjunction
+Fiat-Shamir transcript. NOT a copyleft oracle:
+`tools/oracles/group_kvac/verify.py` is clean-room from the [CPZ] paper and
+GROUP_SPEC. It reconstructs each proof's equation layout itself
+(generator-per-slot and each target expression), so a wrong-generator-in-slot
+or a wrong target in geryon's assembly fails there even though it verifies
+against geryon's own matrix.
+
+The independence is at the protocol layer; the group arithmetic is the same
+primitive geryon uses (255: libsodium ristretto255 via ctypes, challenge
+SHA-512 -> reduce; 448: geryon's vendored libdecaf via the `decaf448_shim`
+shared lib, challenge SHAKE256 114-byte squeeze -> `decode_long`). Both tiers
+matter: the 448 transcript differs from 255 in hash, width, and reduction, and a
+shared prover/verifier transcript bug is invisible to round-trips and to the 255
+oracle. Not under the licensing boundary (no copyleft source linked, read, or
+ported), so it is absent from the Oracles table above.
+
+Producer: `tests/group/test_group_kvac_emit.c` (links `geryon_group`), emitting
+per proof a `tier` tag, the NAMED atomic points, the proof `(V_j, r_i)`, and the
+FS binding `(k, m, UserID, OtherInfo)`. The emitted server-secret scalars are
+FIXED test keys, present only so the oracle can reconstruct the secret-derived
+eq0 target Z the same way the [CPZ] section 5.2 verifier does.
+
+Format: UTF-8 text, one `key=hexvalue` per line, records separated by a blank
+line, `#` lines ignored. Ten records: five proofs x two tiers.
+
+Regeneration (needs a geryon build; 255 verification needs Python 3 +
+libsodium, 448 also the built `decaf448_shim`):
+
+```
+cmake --build build --target test_group_kvac_emit decaf448_shim
+./build/tests/test_group_kvac_emit --dump > tests/vectors/group_kvac.vec
+python3 tools/oracles/group_kvac/verify.py \
+    --decaf448 build/libdecaf448_shim.so tests/vectors/group_kvac.vec
+```
+
+(The shim builds to the pinned path `<build>/libdecaf448_shim.so`, so the
+command is a literal path, not a `find` glob; `GROUP_KVAC_DECAF448` works too.)
+
+Reproducibility notes:
+
+- Verification is a manual Python step (or the optional `test_group_kvac_oracle`
+  ctest, which skips when the toolchain is absent), so core CI needs no extra
+  toolchain. The emitter test (`test_group_kvac_emit`) SKIPs (exit 77) unless
+  run with `--dump`.
+- The proofs are randomized, so each emitter run yields a different (still
+  valid) vector file. Record the SHA-256 here if/when a file is committed:
+  `sha256(group_kvac.vec) = <fill in on commit>`.
+- See `tools/oracles/group_kvac/README.md` for details.

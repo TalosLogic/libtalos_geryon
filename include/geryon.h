@@ -65,7 +65,7 @@ extern "C" {
 /* ---- versioning -------------------------------------------------------- */
 
 #define GY_VERSION_MAJOR 1
-#define GY_VERSION_MINOR 3
+#define GY_VERSION_MINOR 4
 #define GY_VERSION_PATCH 0
 #define GY_PROTOCOL_VERSION 0x01 /* wire version byte (D-GEN-1). */
 
@@ -252,10 +252,11 @@ typedef struct gy_target {
 } gy_target;
 
 /* Per-device fan-out disposition from gy_prepare. */
-#define GY_FANOUT_MESSAGE 1      /* has a usable session: gy_encrypt. */
-#define GY_FANOUT_NEEDS_BUNDLE 2 /* no session: fetch a bundle, gy_initiate.   \
+#define GY_FANOUT_MESSAGE 1 /* has a usable session: gy_encrypt. */
+#define GY_FANOUT_NEEDS_BUNDLE                                                 \
+    2                     /* no session: fetch a bundle, gy_initiate.   \
                                   */
-#define GY_FANOUT_STALE 3        /* session expired (D-SES-7): do not send. */
+#define GY_FANOUT_STALE 3 /* session expired (D-SES-7): do not send. */
 
 typedef struct gy_fanout_desc {
     uint8_t user_id[GY_USER_ID_MAX];

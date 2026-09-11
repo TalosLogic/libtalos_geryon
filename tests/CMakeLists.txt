@@ -45,6 +45,102 @@ foreach(test_src ${GERYON_TEST_SOURCES})
     endif()
 endforeach()
 
+# Group vertical tests (M8): link geryon_group, which pulls geryon_core and
+# talos_schnorr. The group system is a parallel vertical, so these get their own
+# helper rather than geryon_add_test (which links only geryon_core). sodium is
+# needed for the same reason as above (core headers expose libsodium types).
+function(geryon_add_group_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    target_include_directories(${TEST_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(${TEST_NAME} PRIVATE ${GERYON_WARNINGS})
+    target_compile_definitions(${TEST_NAME} PRIVATE
+        GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # Group tests exercise BOTH roles (client operations and the server-side
+    # issue/verify), so they link both facades over the shared internal. A
+    # production client links only geryon_group; the nm_scope_server audit checks
+    # that client archive carries no server symbol (GER-M8-07).
+    target_link_libraries(${TEST_NAME} PRIVATE
+        geryon_group geryon_groups_server sodium monocypher)
+
+    add_test(NAME ${TEST_NAME} COMMAND $<TARGET_FILE:${TEST_NAME}>)
+    if(ARGN)
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${ARGN}")
+    endif()
+endfunction()
+
+file(GLOB GERYON_GROUP_TEST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/group/test_*.c")
+# test_group_server.c deliberately links ONLY the server facade (no client), to
+# prove the server target is self-contained (GER-M8-07); register it separately.
+list(FILTER GERYON_GROUP_TEST_SOURCES EXCLUDE REGEX "/test_group_server\\.c$")
+foreach(test_src ${GERYON_GROUP_TEST_SOURCES})
+    get_filename_component(test_name "${test_src}" NAME_WE)
+    geryon_add_group_test(${test_name} "${test_src}")
+endforeach()
+
+# Standalone server-target test: geryon_groups_server + its shared internal only,
+# NOT geryon_group. The link itself proves no server symbol reaches client code.
+add_executable(test_group_server "${CMAKE_CURRENT_SOURCE_DIR}/group/test_group_server.c")
+target_include_directories(test_group_server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(test_group_server PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(test_group_server PRIVATE
+    GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_group_server PRIVATE
+    geryon_groups_server sodium monocypher)
+add_test(NAME test_group_server COMMAND $<TARGET_FILE:test_group_server>)
+
+# The frozen-vector KATs SKIP (exit 77) until their vectors are captured
+# (GROUP_*_VECTORS_POPULATED 0), so CTest reports them as "Skipped", not failed,
+# on a fresh checkout.
+if(TARGET test_group_vectors)
+    set_tests_properties(test_group_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+if(TARGET test_group_mac_vectors)
+    set_tests_properties(test_group_mac_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+if(TARGET test_group_stmt_vectors)
+    set_tests_properties(test_group_stmt_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+# Emitter for the independent 255-tier [CPZ] oracle: SKIPs unless run with
+# --dump (it produces tests/vectors/group_kvac_255.vec for verify.py, it is not
+# a self-checking test). See tools/oracles/group_kvac/.
+if(TARGET test_group_kvac_emit)
+    set_tests_properties(test_group_kvac_emit PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Shared shim exposing geryon's vendored decaf448 to the Python oracle for
+    # the 448 tier (byte-array ops; every decaf struct stays inside C). Built
+    # with the test suite so the ctest below can load it; the 255 tier needs
+    # only libsodium. Guarded on the decaf448 target, present whenever the group
+    # vertical builds.
+    set(GK_SHIM_ARG "")
+    if(TARGET decaf448)
+        add_library(decaf448_shim SHARED
+            "${CMAKE_SOURCE_DIR}/tools/oracles/group_kvac/decaf448_shim.c")
+        # Pin the output to a stable, documentable path (<build>/decaf448_shim.*)
+        # so the manual verify.py command references a literal path, not a
+        # find(1) glob. The ctest uses $<TARGET_FILE:...> and needs no path.
+        set_target_properties(decaf448_shim PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+        target_link_libraries(decaf448_shim PRIVATE decaf448)
+        set(GK_SHIM_ARG "$<TARGET_FILE:decaf448_shim>")
+    endif()
+
+    # Optional: regenerate a fresh vector file (both tiers) and verify it with
+    # the clean-room Python oracle. Skips (exit 77) when python3 is absent, or
+    # per-tier when a backend (libsodium / the decaf shim) is unavailable, so it
+    # runs opportunistically and never blocks a toolchain-less CI box.
+    add_test(NAME test_group_kvac_oracle
+        COMMAND sh
+            "${CMAKE_SOURCE_DIR}/tools/oracles/group_kvac/run_ctest.sh"
+            "$<TARGET_FILE:test_group_kvac_emit>"
+            "${CMAKE_SOURCE_DIR}/tools/oracles/group_kvac/verify.py"
+            "${GK_SHIM_ARG}")
+    set_tests_properties(test_group_kvac_oracle PROPERTIES
+        SKIP_RETURN_CODE 77 LABELS "oracle")
+endif()
+
 # 448 validation-gate tests (D-XED-12): exercise libdecaf's RFC 7748
 # X448 and RFC 8032 Ed448 primitives DIRECTLY, so they link the decaf448
 # archive (and see its public decaf.h via the INTERFACE include). These TUs are
@@ -382,6 +478,16 @@ add_test(NAME nm_scope_448
         "$<TARGET_FILE:geryon_session>"
         "$<TARGET_FILE:geryon_proto>")
 set_tests_properties(nm_scope_448 PROPERTIES LABELS "audit")
+
+# Client/server scope audit (GER-M8-07, GROUP_SPEC section 8.3): the CLIENT group
+# archive must contain no ServerSecretParams-consuming operation. Build-artifact
+# based; guarded on the group vertical being configured.
+if(TARGET geryon_group)
+    add_test(NAME nm_scope_server
+        COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/audit/nm_scope_server.sh"
+            "$<TARGET_FILE:geryon_group>")
+    set_tests_properties(nm_scope_server PROPERTIES LABELS "audit")
+endif()
 
 # Dependency-surface audit: geryon's own archives reference no C++
 # runtime and no OpenSSL, and a fully linked binary pulls no forbidden shared

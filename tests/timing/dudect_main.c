@@ -51,6 +51,14 @@ extern const struct gy_dudect_target target_hybrid_kem_mix_448;
 extern const struct gy_dudect_target target_x448;
 extern const struct gy_dudect_target target_x448_wrap;
 extern const struct gy_dudect_target target_xed448_sign;
+extern const struct gy_dudect_target target_group_pk_decrypt_255;
+extern const struct gy_dudect_target target_group_pk_decrypt_448;
+extern const struct gy_dudect_target target_group_issue_255;
+extern const struct gy_dudect_target target_group_issue_448;
+extern const struct gy_dudect_target target_group_blind_issue_255;
+extern const struct gy_dudect_target target_group_blind_issue_448;
+extern const struct gy_dudect_target target_group_present_verify_255;
+extern const struct gy_dudect_target target_group_present_verify_448;
 
 static const struct gy_dudect_target *const target_registry[] = {
     &target_sentinel_leak,
@@ -69,6 +77,14 @@ static const struct gy_dudect_target *const target_registry[] = {
     &target_x448,
     &target_x448_wrap,
     &target_xed448_sign,
+    &target_group_pk_decrypt_255,
+    &target_group_pk_decrypt_448,
+    &target_group_issue_255,
+    &target_group_issue_448,
+    &target_group_blind_issue_255,
+    &target_group_blind_issue_448,
+    &target_group_present_verify_255,
+    &target_group_present_verify_448,
     NULL,
 };
 

@@ -3,6 +3,45 @@
 Broad strokes per release. Architecture and rationale live in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+## [1.4.0] [2026-09-10]
+
+Adds an opt-in classical private group system (the [CPZ] design), geryon's first
+group vertical. It is a separate set of libraries (all `EXCLUDE_FROM_ALL`) and
+two new public headers, so the messaging library is behaviorally unchanged and a
+deployment that does not use groups links none of it. All group cryptography is
+classical (the 25519 and 448 proof-group tiers); a post-quantum group system is a
+planned follow-on, not a retrofit of this type. See
+[docs/GROUP_SPEC.md](docs/GROUP_SPEC.md).
+
+- **Anonymous group membership.** Keyed-verification credentials (an algebraic
+  MAC over hidden attributes plus Schnorr conjunction NIZKs) let a member prove
+  membership and present its profile without revealing its UID or ProfileKey to
+  the server, with verifiable encryption of both. Deniable throughout (the proofs
+  are NIZKs, never transferable signatures).
+
+- **Client extends the custodian; server is separate and stateless.** The client
+  API (`include/geryon_group.h`) seals group state into the existing custodian
+  store and caches nothing derived. The server API
+  (`include/geryon_group_server.h`) holds only the service keys and is a distinct
+  target; the client/server split is enforced at link time (a client binary
+  cannot carry issuance code).
+
+- **No group ratchet.** Group messages fan out over the existing pairwise
+  sessions; the GroupMasterKey is distributed to a new member inside a 1:1
+  session (a `GROUP_KEY_DISTRIBUTION` envelope).
+
+- **Group format version.** Each group is created at an immutable capability
+  epoch bound into its GroupID, so an existing group never changes shape under
+  the clients already in it, and a client that lacks a newer version declines to
+  join it cleanly rather than mishandle it.
+
+- **New dependency.** Vendors `libtalos_schnorr` (the Schnorr / decaf
+  conjunction-proof engine) as a pinned submodule under `third_party/`, wired in
+  only for the group vertical.
+
+The messaging suites, the wire format (`protocol_version` 0x01), and the
+stored-blob formats are unchanged; this release is additive over v1.3.0.
+
 ## [1.3.0] [2026-09-03]
 
 The complete library: adds the fourth and highest suite `geryon_h448_1024`

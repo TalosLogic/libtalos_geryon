@@ -38,11 +38,12 @@
 #define GY_ERR_WEAK_KEY -5    /* All-zero DH output / degenerate key. */
 #define GY_ERR_STATE -6       /* Operation invalid in the current state. */
 #define GY_ERR_UNSUPPORTED -7 /* Feature unavailable (e.g. AEAD on CPU). */
-#define GY_ERR_KEY_CHANGED -8 /* Peer identity key changed; accept required.   \
+#define GY_ERR_KEY_CHANGED                                                     \
+    -8                       /* Peer identity key changed; accept required.   \
                                */
-#define GY_ERR_EXPIRED -9     /* Session past its expiration bound (D-SES-7). */
-#define GY_ERR_NOT_FOUND -10  /* Custodian: unknown key handle/id. */
-#define GY_ERR_NO_SPACE -11   /* Custodian: key-slot table exhausted. */
+#define GY_ERR_EXPIRED -9    /* Session past its expiration bound (D-SES-7). */
+#define GY_ERR_NOT_FOUND -10 /* Custodian: unknown key handle/id. */
+#define GY_ERR_NO_SPACE -11  /* Custodian: key-slot table exhausted. */
 
 /*
  * Return a static, human-readable description of a GY_* code, for tests and

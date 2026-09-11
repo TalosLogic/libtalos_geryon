@@ -69,9 +69,10 @@
  * (the consumer just keeps sending), so this illustrates the path; it asserts
  * only that every message still round-trips across the boundary. */
 #define DEMO_KEM_REFRESH_ROUNDS 12
-#define CLIENT_INITIATE_RETRY 2 /* bounded send-retry over the initiate path   \
+#define CLIENT_INITIATE_RETRY                                                  \
+    2                     /* bounded send-retry over the initiate path   \
                                  */
-#define CLIENT_POLL_MS 50       /* per-attempt poll timeout (archive pattern) */
+#define CLIENT_POLL_MS 50 /* per-attempt poll timeout (archive pattern) */
 #define CLIENT_POLL_ATTEMPTS                                                   \
     200 /* bounded attempts: ~10s, then fail (no hang) */
 
@@ -1658,6 +1659,175 @@ out:
     return rc;
 }
 
+/* ---- identity-key change (Sesame 3.2 replacement) ----------------------- */
+
+/*
+ * Responder side of the identity-key-change scenario.  Bob reinstalls IN PLACE:
+ * he keeps his account UserID and DeviceID but factory-resets this device's app
+ * data (filestore_wipe) and creates a FRESH identity key on the clean store (the
+ * real trigger is an app reinstall or a restore onto a wiped device slot, not a
+ * new device).  He re-publishes his registration/OPK batch and his new safety
+ * number, signals Alice to re-handshake, and receives her resumed message.
+ * *cptr is replaced with the reinstalled custodian, which the restart phase then
+ * carries forward.  Returns 0 on success, -1 on failure.
+ */
+static int
+rekey_responder(gy_custodian **cptr, const struct client_cfg *cfg,
+                struct filestore *fs, gy_store_callbacks *cb, uint64_t *tick,
+                int rfd, int wfd)
+{
+    gy_custodian *nc = NULL;
+    uint8_t own_fp[GY_FINGERPRINT_MAX], out[256];
+    uint8_t marker[1];
+    size_t own_len = sizeof(own_fp), ol = sizeof(out);
+
+    gy_custodian_close(*cptr);
+    *cptr = NULL;
+    if (filestore_wipe(cfg->store_dir) != 0 ||
+        filestore_bind(fs, cfg->store_dir, cb) != 0) {
+        fprintf(stderr, "[%s] rekey: store wipe/bind failed\n", cfg->name);
+        return -1;
+    }
+    if (gy_custodian_create(&nc, cfg->suite, cb, (const uint8_t *)cfg->cred,
+                            strlen(cfg->cred), (const uint8_t *)cfg->name,
+                            strlen(cfg->name), (const uint8_t *)self_did(cfg),
+                            strlen(self_did(cfg)), demo_clock, tick,
+                            NULL) != GY_OK) {
+        fprintf(stderr, "[%s] rekey: recreate failed\n", cfg->name);
+        return -1;
+    }
+    if (gy_custodian_generate_identity(nc, CLIENT_SPK_TS, CLIENT_N_OPKS) !=
+        GY_OK) {
+        gy_custodian_close(nc);
+        fprintf(stderr, "[%s] rekey: identity regen failed\n", cfg->name);
+        return -1;
+    }
+    *cptr = nc;
+
+    /* Re-register under the new key and publish the new safety number. */
+    if (publish_directory(nc, cfg, wfd) != 0)
+        return -1;
+    if (gy_self_fingerprint(nc, own_fp, &own_len) != GY_OK ||
+        send_frame(wfd, cfg->name, "coordinator", DEMO_MSG_PUBLISH_FINGERPRINT,
+                   0, own_fp, own_len) != 0)
+        return -1;
+    print_hex(cfg->name, "new safety number after reinstall", own_fp, own_len);
+
+    /* Signal Alice to re-handshake (a one-byte control notice via the relay;
+     * not a geryon message). */
+    marker[0] = 0x01;
+    if (send_frame(wfd, cfg->name, cfg->peer, DEMO_MSG_SEND, s_send_seq++,
+                   marker, sizeof(marker)) != 0)
+        return -1;
+
+    /* Receive Alice's resumed message (her re-initiation under the new key). */
+    if (msg_receive(nc, cfg, rfd, wfd, out, &ol) != 0 || ol != 7 ||
+        memcmp(out, "resumed", 7) != 0) {
+        fprintf(stderr, "[%s] rekey: resumed receive failed\n", cfg->name);
+        return -1;
+    }
+    printf(
+        "[%s] reinstalled with a new identity key; session resumed with %s\n",
+        cfg->name, cfg->peer);
+    return 0;
+}
+
+/*
+ * Initiator side.  On Bob's signal, re-handshake: the first gy_initiate fails
+ * closed with GY_ERR_KEY_CHANGED and hands back both fingerprints.  Alice does
+ * NOT blindly accept: she fetches Bob's freshly published safety number and
+ * confirms it matches the new fingerprint the library surfaced (the out-of-band
+ * re-verification a real app requires), THEN gy_accept_identity and re-initiate.
+ * Returns 0 on success, -1 on failure.
+ */
+static int
+rekey_initiator(gy_custodian *c, const struct client_cfg *cfg, int rfd, int wfd)
+{
+    const uint8_t *puid = (const uint8_t *)cfg->peer;
+    size_t pul = strlen(cfg->peer);
+    const uint8_t *pdid = (const uint8_t *)peer_did(cfg);
+    size_t pdl = strlen(peer_did(cfg));
+    struct demo_frame_header hdr;
+    uint8_t bundle[CLIENT_BUNDLE_MAX], msg[CLIENT_MSG_MAX];
+    uint8_t reply[CLIENT_REG_MAX + 2 + GY_FINGERPRINT_MAX];
+    const uint8_t *peer_fp;
+    size_t blen = sizeof(bundle), mlen = sizeof(msg), peer_fp_len;
+    gy_keychange chg;
+    int rc;
+
+    /* Wait for Bob's "I reinstalled" notice (raw relay frame, not a message). */
+    if (send_frame(wfd, cfg->name, "coordinator", DEMO_MSG_RECV, 0, NULL, 0) !=
+            0 ||
+        wait_frame(rfd, &hdr, msg, sizeof(msg)) != 0 ||
+        hdr.type != DEMO_MSG_DELIVER)
+        return -1;
+
+    /* Re-handshake against Bob's new bundle; expect the key-change failure. */
+    if (fetch_bundle(cfg, rfd, wfd, bundle, &blen) != 0)
+        return -1;
+    if (gy_send_open(c) != GY_OK)
+        return -1;
+    memset(&chg, 0, sizeof(chg));
+    rc = gy_initiate(c, puid, pul, pdid, pdl, bundle, blen,
+                     (const uint8_t *)"resumed", 7, &chg, msg, &mlen);
+    gy_rollback(c);
+    if (rc != GY_ERR_KEY_CHANGED) {
+        fprintf(stderr, "[%s] rekey: expected KEY_CHANGED, got %d\n", cfg->name,
+                rc);
+        return -1;
+    }
+    print_hex(cfg->name, "peer old safety number", chg.old_fp, chg.fp_len);
+    print_hex(cfg->name, "peer new safety number", chg.new_fp, chg.fp_len);
+
+    /* Out-of-band re-verification: fetch Bob's freshly published safety number
+     * and confirm it matches the new key the library is about to have us pin. */
+    if (send_frame(wfd, cfg->name, cfg->peer, DEMO_MSG_FETCH_IDENTITY, 0, NULL,
+                   0) != 0 ||
+        wait_frame(rfd, &hdr, reply, sizeof(reply)) != 0 ||
+        hdr.type != DEMO_MSG_IDENTITY || hdr.data_len < 2)
+        return -1;
+    peer_fp_len = ((size_t)reply[0] << 8) | (size_t)reply[1];
+    if (2 + peer_fp_len > hdr.data_len)
+        return -1;
+    peer_fp = reply + 2;
+    if (peer_fp_len != chg.fp_len ||
+        memcmp(peer_fp, chg.new_fp, chg.fp_len) != 0) {
+        fprintf(stderr,
+                "[%s] rekey: new key does NOT match %s's published safety "
+                "number; refusing\n",
+                cfg->name, cfg->peer);
+        return -1;
+    }
+    printf("[%s] %s's new safety number verified out of band; accepting\n",
+           cfg->name, cfg->peer);
+
+    /* Accept the re-verified identity, then re-initiate and send. */
+    if (gy_accept_identity(c, puid, pul, pdid, pdl, bundle, blen) != GY_OK) {
+        fprintf(stderr, "[%s] rekey: gy_accept_identity failed\n", cfg->name);
+        return -1;
+    }
+    mlen = sizeof(msg);
+    if (gy_send_open(c) != GY_OK)
+        return -1;
+    memset(&chg, 0, sizeof(chg));
+    rc = gy_initiate(c, puid, pul, pdid, pdl, bundle, blen,
+                     (const uint8_t *)"resumed", 7, &chg, msg, &mlen);
+    if (rc != GY_OK) {
+        gy_rollback(c);
+        fprintf(stderr, "[%s] rekey: re-initiate after accept failed (%d)\n",
+                cfg->name, rc);
+        return -1;
+    }
+    if (gy_commit(c) != GY_OK)
+        return -1;
+    if (send_frame(wfd, cfg->name, cfg->peer, DEMO_MSG_SEND, s_send_seq++, msg,
+                   mlen) != 0)
+        return -1;
+    printf("[%s] accepted %s's new identity; conversation resumed\n", cfg->name,
+           cfg->peer);
+    return 0;
+}
+
 int
 client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
 {
@@ -1746,6 +1916,20 @@ client_run(const struct client_cfg *cfg, int coord_rfd, int coord_wfd)
      * skipped for classical suites, which carry no ML-KEM refresh. */
     if (rc == 0 && cfg->role == CLIENT_INITIATOR && suite_is_hybrid(cfg->suite))
         rc = run_kem_refresh(cfg);
+
+    /* Demo: identity-key change (Sesame 3.2).  Bob reinstalls in place (same
+     * UserID/DeviceID, new identity key on a wiped store); Alice detects the
+     * change, re-verifies the new safety number out of band, then re-accepts and
+     * resumes.  Runs under the hybrid twin too, exercising a hybrid identity
+     * replacement.  Before the restart phase, so the reinstalled identity (and
+     * the session re-established here) carries forward into it. */
+    if (rc == 0) {
+        if (cfg->role == CLIENT_INITIATOR)
+            rc = rekey_initiator(c, cfg, coord_rfd, coord_wfd);
+        else
+            rc =
+                rekey_responder(&c, cfg, &fs, &cb, &tick, coord_rfd, coord_wfd);
+    }
 
     /* the example: restart persistence.  The responder hands off to a fresh
      * process: it signals a restart, closes its custodian, and exits WITHOUT a

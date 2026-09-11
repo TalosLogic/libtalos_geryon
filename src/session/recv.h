@@ -35,6 +35,14 @@
 
 #define GY_MSG_INIT 0x01 /* inner is an X3DH initial message (D-X3DH-15) */
 #define GY_MSG_DR 0x02   /* inner is a Double Ratchet frame (D-DR-16) */
+/*
+ * 0x03 is RESERVED for the group vertical's GROUP_KEY_DISTRIBUTION frame
+ * (GY_MSG_GROUP_KEY_DISTRIBUTION, src/group/group_wire.h, GER-M8-08): a D-GEN-1
+ * envelope whose payload is a bare GroupMasterKey.  It is framed and parsed by
+ * the group vertical, NOT here; the messaging codec (proto/envelope.c) stays
+ * group-unaware and correctly rejects 0x03 as a reserved msg_type.  Messaging
+ * types must not reuse 0x03.
+ */
 
 /* Optional monotone clock (D-SES-7: time enters only through a callback). */
 typedef uint64_t (*gy_recv_clock_fn)(void *ctx);

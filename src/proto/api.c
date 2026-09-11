@@ -375,6 +375,30 @@ gy_accept_identity(gy_custodian *c, const uint8_t *user_id, size_t user_id_len,
 
     if (c == NULL || device_id == NULL || user_id == NULL)
         return GY_ERR_ARG;
+
+    /* A hybrid suite stores a hybrid device record, so the accept must run the
+     * hybrid path (parse the hybrid bundle, replace the hybrid identity key);
+     * the classical path below would load a classical record that does not
+     * exist and fail.  Mirrors gy_receive's is_hybrid dispatch. */
+    if (c->desc->is_hybrid) {
+        struct gy_hybrid_prekey_bundle hb;
+
+        rc = gy_hybrid_bundle_parse(&hb, c->desc, bundle, bundle_len);
+        if (rc != GY_OK)
+            return rc;
+        rc = gy_op_begin(&c->recv.op, &c->store);
+        if (rc != GY_OK)
+            return rc;
+        rc = gy_hybrid_accept_key_change(&c->recv.op, c->desc->suite_id,
+                                         user_id, user_id_len, device_id,
+                                         device_id_len, &hb.ik);
+        if (rc == GY_OK)
+            rc = gy_op_commit(&c->recv.op);
+        else
+            gy_op_abort(&c->recv.op);
+        return rc;
+    }
+
     rc = gy_bundle_parse(&b, c->desc, bundle, bundle_len);
     if (rc != GY_OK)
         return rc;

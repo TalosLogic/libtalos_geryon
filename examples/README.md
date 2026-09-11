@@ -239,3 +239,182 @@ with no public accessor, so `gy_registration_identity_pub` was added; and the
 identity-verification phase needed a peer's safety number with no public
 accessor (only the custodian's own `gy_self_fingerprint` existed), so
 `gy_bundle_fingerprint` was added. Both are additive to the frozen API.
+
+# geryon GROUP end-to-end example
+
+A second worked example (`geryon_group_demo`, and its 448-tier twin
+`geryon_group_c448_demo`) drives the classical private group system (the [CPZ]
+KVAC construction, `include/geryon_group.h` + `include/geryon_group_server.h`)
+end to end across **six real processes** (five members plus a second device for
+one of them). It reuses the messaging example's
+transport verbatim (`demo_ipc.c`, `filestore.c`) and follows the same
+methodology: copy the proven call sequences, do not reinvent them. Like the
+messaging demo it is a **worked example, not a security proof.**
+
+## What a group is here, and what it is not
+
+Group *messaging* is ordinary pairwise messaging fanned out: there is no group
+ratchet. The founder mints a `GroupMasterKey` and hands it to each member
+**inside a real 1:1 geryon session** (`gy_initiate` with a
+`GROUP_KEY_DISTRIBUTION` envelope as the session's first message), and group
+messages are then sent member-to-member over those same pairwise sessions. What
+the group *system* adds on top is anonymous, unlinkable membership: KVAC
+credentials that let a member prove "I am a member of this group" and enroll an
+encrypted UID/ProfileKey in the roster without revealing which member it is.
+
+## Client / server split (an ABI boundary, not just a convention)
+
+- **The client extends the custodian.** Every client operation is a
+  `gy_custodian_group_*` call (`include/geryon_group.h`); group secret state
+  (the `GroupMasterKey`, credentials, the member's own ProfileKey) seals into
+  the custodian's existing sealed store under a reserved record-kind band, right
+  alongside the identity/prekey/session records. A group-capable custodian is
+  just a custodian whose 16-byte `self_user_id` is the member's account UID.
+- **The server is a separate, stateless target.** `geryon_group_server.h`
+  depends on **nothing** in `geryon.h`: it holds only the sealed KVAC key
+  (`ServerSecretParams`), carries no identity, no prekeys, no sessions, and
+  never sees a custodian. A client never links it. So the client/server boundary
+  (D-GRP-1/2) is an ABI property, provable by the fact that the two headers share
+  no types, not only a symbol-audit convention.
+- **The server holds no group secret.** A group's public parameters are deployer
+  state the server is *given* per group (`SRV_REGISTER` in the demo); the server
+  verifies presentations and issues credentials against them but cannot decrypt
+  any UID or ProfileKey. The roster it serves is a list of opaque ciphertexts.
+
+## Topology
+
+```
+              +------------------+
+              |   coordinator    |  TWO untrusted roles:
+              |  group server +  |   - group SERVER: holds ServerSecretParams
+              |      relay       |     (geryon_group_server), answers the
+              +--+--+--+--+--+---+     section 8.1 RPCs
+        pipe  |  |  |  |  |  | pipe    - RELAY: forwards opaque bytes (key
+         +----+  |  |  |  |  +----+      distribution + fanned-out group
+      +--+--+ +--+-+ ++--+ +--+-+ +--+--+  messages), never parsing them
+      | m1  | | m2 | | m3 | | m4 | | m5  | + | m2b |  (m2's 2nd device)
+      +-----+ +----+ +----+ +----+ +-----+   +-----+
+      founder  member member member invited  companion
+```
+
+Five members exercise every role transition: a founder/admin (m1), full members
+that self-add (m2, m3, m4), an invited-but-not-joined member (m5), and a
+deletion (m4 is removed). One member (m2) additionally runs a **second device**,
+"m2b", as a sixth process. Each process has its own file-backed sealed store, so
+the persistence and untrusted-relay properties are real.
+
+## Multi-device: membership is per account, delivery is per device
+
+m2's two devices (m2b is the companion) share one 16-byte member UID but have
+distinct device ids and separate custodians/stores. That split is the whole
+point:
+
+- **Membership is per account.** Only m2's primary performs the KVAC operations
+  (credentials, self-add, present, ProfileKey rotation), so the roster holds a
+  single entry for m2's UID. The companion performs no group-credential op at
+  all.
+- **Delivery is per device.** The founder establishes a pairwise session with
+  *each* of m2's devices, so both receive the `GroupMasterKey`. Thereafter
+  `gy_prepare` over m2's UID naturally returns a descriptor per device, and a
+  fanned-out group message is encrypted once per device and relayed to both
+  ("m2" and "m2b") in a single send transaction. This is geryon's real Sesame
+  fan-out, exercised rather than simulated.
+
+The demo fixes the device topology in `group_demo_proto.h` so every party agrees
+without a discovery round trip; a real app learns a peer's device set from the
+server (the Sesame device list).
+
+## What it demonstrates
+
+The lifecycle runs in phases, gated by N-party barriers so the roster is in a
+known state before any member asserts on it:
+
+1. **Server bring-up and param install** - the server generates
+   `ServerSecretParams` (`gy_group_server_create`, sealed under its own KEK) and
+   exports `ServerPublicParams` (`gy_group_server_export_public`); every member
+   fetches and installs them
+   (`gy_custodian_group_install_server_params`, sealed into the custodian).
+2. **Group creation + key distribution** - the founder mints the group
+   (`gy_custodian_group_create`), registers its public parameters with the
+   server (`gy_custodian_group_export_group_public_params`), and distributes the
+   `GroupMasterKey` to each member over a fresh 1:1 session
+   (`gy_custodian_group_export_key_envelope` carried by `gy_initiate`), and to
+   m2's companion device over its own session; each recipient installs it
+   (`gy_custodian_group_install_key_envelope`, which returns the 16-byte
+   `GroupID`).
+3. **Credentials, join, present** - each full member gets an AuthCredential
+   (7.1, `gy_custodian_group_receive_auth_credential`) and a blind-issued
+   ProfileKeyCredential (7.2/7.3,
+   `gy_custodian_group_pk_credential_request` / `_finish`), enrolls its
+   encrypted UID+ProfileKey (7.5, `gy_custodian_group_add_member`), and proves
+   anonymous membership (7.4, `gy_custodian_group_auth_present`).
+4. **ProfileKey rotation** (7.10) - m2 rotates its ProfileKey. This needs a
+   FRESH ProfileKeyCredential over the new key (the old one is bound to the old
+   key) before presenting; the server replaces only m2's roster entry.
+5. **Invite + delete** (7.9 / 7.8) - the founder invites m5 (a UID-only roster
+   entry, no ProfileKey yet) and removes m4.
+6. **Fetch + decrypt roster** (7.7, `gy_custodian_group_fetch_members`) - every
+   surviving member decrypts the roster (3 full + 1 invited) and confirms its
+   own entry carries its current ProfileKey (m2's is the rotated one).
+7. **Group message fan-out** - the founder sends each surviving member a chain
+   of messages over the pairwise sessions; for m2 the chain goes to **both** of
+   its devices (one `gy_prepare`/`gy_encrypt` per device). The coordinator
+   delivers each chain reordered, so receivers recover it through the ratchet
+   skip store (the group analogue of the messaging demo's out-of-order phase).
+8. **Identity-key change** (Sesame 3.2) - m3 reinstalls in place: it keeps its
+   account UID and device id but creates a fresh identity key on a clean store
+   (the real trigger is an app reinstall or a restore onto a wiped device slot,
+   not a new device). It re-registers a bundle and signals the founder to
+   re-handshake. The founder's `gy_initiate` then fails closed with
+   `GY_ERR_KEY_CHANGED`, handing back the old and new fingerprints (the
+   safety-number change a real app surfaces for out-of-band re-verification);
+   after `gy_accept_identity` the re-initiation succeeds and the conversation
+   resumes. Only m1 and m3 take part; the rest proceed to teardown.
+
+## Depth checks (the example doubles as a regression)
+
+Three members carry extra assertions that a real app's tests would want:
+
+- **Tampered presentation rejected** - m3 corrupts one byte of a valid
+  AuthCredentialPresentation and confirms the server rejects it as the uniform
+  `GY_ERR_VERIFY` (no oracle), the group analogue of the messaging demo's
+  forged-request rejection.
+- **Sealed group state survives restart** - m3 closes its custodian and reopens
+  it from the on-disk store (`gy_custodian_group_open`), then re-presents
+  membership using only state recovered from disk (group master secret + stored
+  AuthCredential), and later still decrypts the fanned-out message over its
+  restored pairwise session.
+- **Daily-credential rotation** - m3 rolls its clock forward one day, confirms
+  the day-bound AuthCredential is now `GY_ERR_EXPIRED` (spec-true daily model,
+  D-GRP-7), then re-issues a fresh credential for the new day and presents it.
+
+## Two patterns worth copying
+
+- **The clock (D-SES-7).** geryon never reads a system clock; time enters only
+  through the callback a consumer supplies at `gy_custodian_create`. The demo's
+  `demo_clock_now` calls POSIX `time(2)` for real and returns epoch seconds; the
+  app owns a small ctx it hands the library by pointer (here it also carries a
+  test-only offset the rotation check bumps to move a day forward without
+  waiting). A real app wires the callback to its trusted clock and leaves the
+  offset out.
+- **Reopen for group use.** `gy_custodian_open` (the frozen v1.0.0 custody ABI)
+  takes no clock, and messaging never needs one after open. The daily group
+  credentials do, so the group vertical adds `gy_custodian_group_open`: same
+  parameters plus the clock, calling `gy_custodian_open` internally and
+  reinstalling the clock. Reopen a group member with this, not the plain open.
+
+## Scope
+
+The group API is **classical-suite only** (`geryon_c25519`, `geryon_c448`); a
+hybrid-suite custodian's group calls return `GY_ERR_UNSUPPORTED`. Post-quantum
+groups are a separate future construction with their own API. As with the
+messaging demo, building this against the still-unfrozen group API dogfooded it
+and surfaced additive gaps (the `gy_custodian_group_open` clock reopen above,
+`gy_custodian_group_export_group_public_params`, the server-side
+`gy_group_server_member_list_encode` roster assembly, and passing the group
+public parameters into the server verify calls).
+
+```sh
+ctest --test-dir build -R "group_demo|group_c448_demo"   # exit 0 = pass
+./build/examples/geryon_group_demo                        # phase-by-phase log
+```

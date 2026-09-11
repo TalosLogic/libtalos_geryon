@@ -20,7 +20,8 @@
 #include "gy_test.h"
 
 #define FLAGS_OK ((uint64_t)1 | ((uint64_t)20 << 16) | ((uint64_t)1 << 32))
-#define HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 0x01   \
+#define HFLAG                                                                  \
+    ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 0x01   \
                                                     */
 #define TS 1723900000ULL
 

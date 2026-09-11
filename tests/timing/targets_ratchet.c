@@ -231,7 +231,8 @@ const struct gy_dudect_target target_dr_tag = {
 
 #define HX_TS 1723900000ULL
 #define HX_FLAGS ((uint64_t)1 | ((uint64_t)20 << 16) | ((uint64_t)1 << 32))
-#define HX_HFLAG ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 1   \
+#define HX_HFLAG                                                               \
+    ((uint32_t)20 | ((uint32_t)1 << 16)) /* interval 20, aead 1   \
                                                        */
 
 /*

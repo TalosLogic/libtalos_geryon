@@ -30,6 +30,15 @@ int filestore_bind(struct filestore *fs, const char *dir,
                    gy_store_callbacks *cb);
 
 /*
+ * Remove every record file under dir, leaving an empty directory: a "factory
+ * reset" of this device's app data, so a custodian created here afterward starts
+ * from a genuinely absent store (used by the identity-key-change scenario, which
+ * models an app reinstall on the same device slot).  Returns 0 on success, -1 if
+ * the directory cannot be opened.
+ */
+int filestore_wipe(const char *dir);
+
+/*
  * Sealing-at-rest illustration: print a prefix of the sealed
  * identity blob so a reader can SEE it is an opaque seal envelope, not a raw
  * key.  This is an illustration, not a proof: the bootstrap header is

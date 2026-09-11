@@ -6,7 +6,8 @@ points at the authoritative documents rather than restating them:
 - `docs/CUSTODY_SPEC.md` - design for the key-custody layer (the `gy_custodian`
   public API as of v1.0.0; decisions in D-CUST-1).
 - `docs/decisions/` - the per-module implementer decision register (D-GEN,
-  D-XED, D-X3DH, D-DR, D-SES, D-CUST); every "D-*" tag below resolves there.
+  D-XED, D-X3DH, D-DR, D-SES, D-CUST, and D-GRP for the group vertical); every
+  "D-*" tag below resolves there.
 - `CHANGELOG.md` - broad strokes per release.
 
 ## What geryon is
@@ -19,7 +20,9 @@ survives, while offline deniability is preserved (no transcript signatures).
 The hybrid construction is geryon's own, not Signal's PQXDH, and is specified
 normatively in [HYBRID_SPEC.md](HYBRID_SPEC.md). Protocol code is clean-room
 from specifications; primitives come from permissively-licensed libraries by
-preference. The public API is the single installed header `include/geryon.h`.
+preference. The core public API is the installed header `include/geryon.h`; an
+opt-in private-group vertical adds two further public headers (see Private
+groups, below).
 
 ## Cipher suites
 
@@ -148,9 +151,41 @@ discipline unconditional, software fallbacks included. In the hybrid suites no
 KEM secret is ever optional (handshake or ratchet) and hybrid signature
 verification requires both XEdDSA and ML-DSA to pass.
 
+## Private groups (opt-in vertical)
+
+A classical private group system (the [CPZ] design; normative in
+[GROUP_SPEC.md](GROUP_SPEC.md), decisions in D-GRP), added in v1.4.0 as a
+separate set of libraries (all `EXCLUDE_FROM_ALL`, so a deployment that does not
+use groups links none of it), layered like the messaging library over `core/`
+and the vendored `libtalos_schnorr` proof engine.
+
+- **Two roles, split at link time (D-GRP-1/2).** The CLIENT
+  (`include/geryon_group.h`) extends a custodian: group secret state seals into
+  the custodian's store and nothing derived is cached (D-GRP-7). The SERVER
+  (`include/geryon_group_server.h`) is a separate, stateless target holding only
+  the service keys; it issues and verifies credentials and never touches the
+  messaging custodian. A `nm` scope audit proves the client archive carries no
+  ServerSecretParams-consuming (issuance) symbol.
+- **Anonymous credentials.** Membership is proven with keyed-verification
+  credentials: an algebraic MAC over hidden attributes (UID, ProfileKey) plus
+  Schnorr conjunction NIZKs, with verifiable ElGamal-style encryption of the UID
+  and ProfileKey so the server learns neither. Deniable (the proofs are NIZKs,
+  not transferable signatures). Classical only: the guarantees rest on
+  discrete-log, so no PQ confidentiality or anonymity (D-GRP-11); a post-quantum
+  group system (QSPGS) is a planned follow-on, not a retrofit of this type.
+- **No group ratchet.** Group messages fan out over the 1:1 sessions above; the
+  GroupMasterKey reaches a new member inside a 1:1 session (a
+  `GROUP_KEY_DISTRIBUTION` envelope, D-GRP-6). GroupSecretParams are rederived
+  from the GroupMasterKey on demand and zeroized after use.
+- **Group format version (D-GRP-12).** Each group is created at an immutable
+  capability epoch, a 2-byte value bound into the GroupID, so an existing group's
+  feature set cannot change under the clients in it, and a client that lacks a
+  newer version declines to join rather than mishandle it.
+
 ## Public API
 
-`include/geryon.h` is the only installed header; every exported symbol starts
+`include/geryon.h` is the core installed header (the opt-in group vertical adds
+`geryon_group.h` / `geryon_group_server.h`); every exported symbol starts
 `gy_`. A `gy_custodian` is the public entry object (D-CUST-1; design in
 docs/CUSTODY_SPEC.md): `gy_custodian_create` mints it from a suite id, the
 store callback table, an unlock credential, this device's ids, an optional

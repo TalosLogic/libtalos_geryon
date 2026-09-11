@@ -5,6 +5,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -207,6 +208,30 @@ filestore_bind(struct filestore *fs, const char *dir, gy_store_callbacks *cb)
     cb->store_identity = cb_store_identity;
     cb->load_prekey = cb_load_prekey;
     cb->consume_opk = cb_consume_opk;
+    return 0;
+}
+
+int
+filestore_wipe(const char *dir)
+{
+    DIR *d;
+    struct dirent *e;
+    char path[FILESTORE_DIR_MAX + 256];
+
+    d = opendir(dir);
+    if (d == NULL)
+        return -1;
+    /* Remove every record file so a fresh custodian created here starts from a
+     * genuinely empty store (a "factory reset" of this device's app data). */
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0)
+            continue;
+        if ((size_t)snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) >=
+            sizeof(path))
+            continue;
+        remove(path);
+    }
+    closedir(d);
     return 0;
 }
 

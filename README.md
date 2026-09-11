@@ -7,8 +7,10 @@ EITHER the ECDH or the ML-KEM assumption survives, and offline deniability is
 preserved exactly as in the classical suites (no transcript signatures). The
 hybrid design is geryon's own (see [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md)),
 not Signal's PQXDH. Protocol code is clean-room from the Signal specifications;
-primitives come from permissively-licensed libraries by preference. The public
-API is the single installed header `include/geryon.h`.
+primitives come from permissively-licensed libraries by preference. The core
+public API is the installed header `include/geryon.h`; an opt-in private-group
+vertical (v1.4.0) adds `include/geryon_group.h` (client) and
+`include/geryon_group_server.h` (server).
 
 ## Cipher suites
 
@@ -115,6 +117,38 @@ additionally exercising the PQ-pending transition and the ratchet KEM refresh,
 and `geryon_c448_demo` runs it under the classical 448 tier. See
 [examples/README.md](examples/README.md).
 
+## Private groups (opt-in)
+
+v1.4.0 adds a private group system (the classical [CPZ] design) as an **opt-in**
+vertical: a separate set of libraries and two additional public headers, so a
+deployment that does not use groups links none of it.
+
+- **Client** (`include/geryon_group.h`): the group client *extends* a custodian.
+  A group's secret state (the GroupMasterKey, cached credentials, the user's own
+  ProfileKey) seals into the custodian's existing store, and nothing derived is
+  cached. Members prove anonymous membership with keyed-verification credentials
+  (an algebraic MAC plus Schnorr NIZKs) and encrypt their UID and ProfileKey, so
+  the group server learns neither.
+- **Server** (`include/geryon_group_server.h`): a *separate, stateless* target
+  that holds only the group service keys, issues and verifies credentials, and
+  never touches the messaging custodian. The client/server split is enforced at
+  link time (a client binary cannot carry issuance code).
+- **Message delivery** is ordinary pairwise messaging: group messages fan out
+  over the 1:1 sessions above, and the GroupMasterKey is handed to a new member
+  inside a 1:1 session (a `GROUP_KEY_DISTRIBUTION` envelope). There is no
+  separate group ratchet.
+- **Group format version.** Each group is created at an immutable capability
+  epoch bound into its GroupID, so an existing group never changes shape under
+  the clients already in it; a client that lacks a newer version declines to
+  join it rather than mishandle it.
+
+The classical group type provides **no** post-quantum confidentiality or
+anonymity (its guarantees rest on discrete-log assumptions), exactly like the
+classical messaging suites; a post-quantum group system is planned as a
+follow-on. Link `geryon_group` (client) and/or `geryon_groups_server` (server);
+both are `EXCLUDE_FROM_ALL`. See [docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) and the
+worked example in [examples/README.md](examples/README.md).
+
 ## Building
 
 Requires CMake >= 3.22, a C17 compiler (gcc or clang), and the autotools
@@ -189,6 +223,8 @@ cmake --build build --target format-check
 - [docs/DESIGN.md](docs/DESIGN.md) - whole-system design overview.
 - [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md) - the normative specification for
   the hybrid suites (geryon's own PQ-hybrid design).
+- [docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) - the private group system (the
+  classical [CPZ] design; opt-in vertical).
 - [docs/PQ_COMPARISON.md](docs/PQ_COMPARISON.md) - the hybrid design rationale
   against Signal's PQ approach.
 - [CHANGELOG.md](CHANGELOG.md) - broad strokes per release.
