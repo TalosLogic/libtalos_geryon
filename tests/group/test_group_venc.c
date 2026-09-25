@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for verifiable encryption of UID and ProfileKey (GROUP_SPEC section 6,
- * GER-M8-05), both classical tiers: Enc/Dec round-trip, deterministic
+ * Tests for verifiable encryption of UID and ProfileKey (GROUP_SPEC section
+ * 6), both classical tiers: Enc/Dec round-trip, deterministic
  * unique-ciphertext, and rejection of the wrong key, a tampered ciphertext, an
  * identity E1, and (for ProfileKey) the wrong UID.  Also the ciphertext object
  * encodings.

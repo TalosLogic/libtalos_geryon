@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Emitter for the independent [CPZ] verify-equation oracle (GER-M8-04/05 task
- * 5, D-GEN-6), BOTH tiers.  geryon's group KVAC/NIZK layer is clean-room and
+ * Emitter for the independent [CPZ] verify-equation oracle (D-GEN-6),
+ * BOTH tiers.  geryon's group KVAC/NIZK layer is clean-room and
  * deliberately NOT zkgroup-byte-compatible (D-GRP-4), so there is no external
  * byte-compat oracle; instead an INDEPENDENT reimplementation of the [CPZ]
  * section 3.1/5 verify equations + the Fiat-Shamir transcript
@@ -389,8 +389,7 @@ main(int argc, char **argv)
         static const uint8_t suites[] = {GY_SUITE_C25519, GY_SUITE_C448};
         size_t s;
 
-        printf("# geryon group KVAC oracle vectors (both tiers, "
-               "GER-M8-04/05).\n");
+        printf("# geryon group KVAC oracle vectors (both tiers).\n");
         printf("# Independent verifier: "
                "tools/oracles/group_kvac/verify.py\n");
         printf("# Records separated by blank lines; key=hexvalue; # comments.\n"

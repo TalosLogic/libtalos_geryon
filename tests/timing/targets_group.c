@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Constant-time timing target for the GROUP_SPEC section 6.4 ProfileKey
- * decryption candidate loop (GER-M8-05, D-GRP-8), both classical tiers.  This
+ * decryption candidate loop (D-GRP-8), both classical tiers.  This
  * is geryon's ONLY constant-time-critical group composition: gy_group_pk_decrypt
  * candidate-decodes M4', then over the FULL fixed candidate count (64 on the 255
  * tier, 8 on 448; no early exit) tests EB1 = HashToG1(ProfileKey_c, UID)^b1 with

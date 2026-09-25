@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * GER-M8-07 standalone server-target test (GROUP_SPEC section 8.2 / 8.5): links
+ * Standalone server-target test (GROUP_SPEC section 8.2 / 8.5): links
  * ONLY geryon_groups_server (plus the shared internal it pulls in), NOT the
  * client facade geryon_group.  It therefore proves two things at once:
  *   1. Link-time: no server-role function reaches into client-only code (if it

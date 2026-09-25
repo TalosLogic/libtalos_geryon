@@ -15,7 +15,7 @@
 #include "util.h"
 
 /*
- * Credential presentation server role (GER-M8-07): the verifier-side pi_A / pi_P
+ * Credential presentation server role: the verifier-side pi_A / pi_P
  * checks, which recompute Z from ServerSecretParams and run gen_verify_conj.
  * These consume a gy_group_server_secret, so this TU is SERVER-ONLY and must not
  * appear in the client archive (nm_scope_server.sh, GROUP_SPEC section 8.3).

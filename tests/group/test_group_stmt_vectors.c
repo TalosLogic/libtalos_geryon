@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Frozen self-KAT check for the credential/presentation STATEMENT surface
- * (GROUP_SPEC sections 3.2/3.3/6, GER-M8-04 + GER-M8-05).  Every M8-04/05 proof
+ * (GROUP_SPEC sections 3.2/3.3/6).  Every credential-layer proof
  * (pi_I, pi_A, pi_P, pi_BR, pi_BI) is a randomized Fiat-Shamir transcript and so
  * cannot be byte-frozen directly; what CAN be frozen is the DETERMINISTIC data
  * the proofs bind.  For a fixed UID, ProfileKey, redemption date, and
@@ -243,8 +243,8 @@ dump(void)
            " * SPDX-License-Identifier: AGPL-3.0-only\n"
            " *\n"
            " * Frozen self-KAT vectors for the credential/presentation\n"
-           " * statement surface (GROUP_SPEC sections 3.2/3.3/6, GER-M8-04 +\n"
-           " * GER-M8-05).  Captured from a clean build for the fixed UID,\n"
+           " * statement surface (GROUP_SPEC sections 3.2/3.3/6).  Captured\n"
+           " * from a clean build for the fixed UID,\n"
            " * ProfileKey, redemption date, and GroupMasterKey in\n"
            " * test_group_stmt_vectors.c.\n"
            " */\n\n");

@@ -45,7 +45,7 @@ foreach(test_src ${GERYON_TEST_SOURCES})
     endif()
 endforeach()
 
-# Group vertical tests (M8): link geryon_group, which pulls geryon_core and
+# Classical group vertical tests: link geryon_group, which pulls geryon_core and
 # talos_schnorr. The group system is a parallel vertical, so these get their own
 # helper rather than geryon_add_test (which links only geryon_core). sodium is
 # needed for the same reason as above (core headers expose libsodium types).
@@ -59,7 +59,7 @@ function(geryon_add_group_test TEST_NAME TEST_SOURCE)
     # Group tests exercise BOTH roles (client operations and the server-side
     # issue/verify), so they link both facades over the shared internal. A
     # production client links only geryon_group; the nm_scope_server audit checks
-    # that client archive carries no server symbol (GER-M8-07).
+    # that client archive carries no server symbol.
     target_link_libraries(${TEST_NAME} PRIVATE
         geryon_group geryon_groups_server sodium monocypher)
 
@@ -72,7 +72,7 @@ endfunction()
 file(GLOB GERYON_GROUP_TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/group/test_*.c")
 # test_group_server.c deliberately links ONLY the server facade (no client), to
-# prove the server target is self-contained (GER-M8-07); register it separately.
+# prove the server target is self-contained; register it separately.
 list(FILTER GERYON_GROUP_TEST_SOURCES EXCLUDE REGEX "/test_group_server\\.c$")
 foreach(test_src ${GERYON_GROUP_TEST_SOURCES})
     get_filename_component(test_name "${test_src}" NAME_WE)
@@ -89,6 +89,64 @@ target_compile_definitions(test_group_server PRIVATE
 target_link_libraries(test_group_server PRIVATE
     geryon_groups_server sodium monocypher)
 add_test(NAME test_group_server COMMAND $<TARGET_FILE:test_group_server>)
+
+# QSPGS vertical tests: link geryon_qspgs, which pulls geryon_core (and the
+# KR-ML-DSA primitives folded into it). The quantum-safe group system is its own
+# parallel vertical, so it gets its own helper, mirroring geryon_add_group_test.
+function(geryon_add_qspgs_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    target_include_directories(${TEST_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_options(${TEST_NAME} PRIVATE ${GERYON_WARNINGS})
+    target_compile_definitions(${TEST_NAME} PRIVATE
+        GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # QSPGS tests exercise BOTH roles (the section 5 client operations and the
+    # section 7.3 server checks), so they link both facades over the shared
+    # internal. A production client links only geryon_qspgs; the
+    # nm_scope_qspgs_server audit checks the server archive carries no client
+    # symbol.
+    target_link_libraries(${TEST_NAME} PRIVATE
+        geryon_qspgs geryon_qsgroups_server sodium monocypher)
+    add_test(NAME ${TEST_NAME} COMMAND $<TARGET_FILE:${TEST_NAME}>)
+    if(ARGN)
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${ARGN}")
+    endif()
+endfunction()
+
+file(GLOB GERYON_QSPGS_TEST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/qspgs/test_*.c")
+# test_qspgs_server.c deliberately links ONLY the server facade (no client), to
+# prove the server target is self-contained and stateless; register
+# it separately, mirroring test_group_server.
+list(FILTER GERYON_QSPGS_TEST_SOURCES EXCLUDE REGEX "/test_qspgs_server\\.c$")
+foreach(test_src ${GERYON_QSPGS_TEST_SOURCES})
+    get_filename_component(test_name "${test_src}" NAME_WE)
+    geryon_add_qspgs_test(${test_name} "${test_src}")
+endforeach()
+
+# Standalone server-target test: geryon_qsgroups_server + its shared internal
+# only, NOT geryon_qspgs. The link itself proves no client symbol reaches the
+# server target (QSPGS_SPEC section 7.1; the nm_scope_qspgs_server audit checks
+# the archive statically).
+add_executable(test_qspgs_server
+    "${CMAKE_CURRENT_SOURCE_DIR}/qspgs/test_qspgs_server.c")
+target_include_directories(test_qspgs_server PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(test_qspgs_server PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(test_qspgs_server PRIVATE
+    GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_qspgs_server PRIVATE
+    geryon_qsgroups_server sodium monocypher)
+add_test(NAME test_qspgs_server COMMAND $<TARGET_FILE:test_qspgs_server>)
+
+# The frozen-vector KATs SKIP (exit 77) until captured (QSPGS_KEYS_KAT_POPULATED
+# 0), so a fresh checkout reports them "Skipped", not failed.
+if(TARGET test_qspgs_vectors)
+    set_tests_properties(test_qspgs_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+if(TARGET test_qspgs_wire_vectors)
+    set_tests_properties(test_qspgs_wire_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 # The frozen-vector KATs SKIP (exit 77) until their vectors are captured
 # (GROUP_*_VECTORS_POPULATED 0), so CTest reports them as "Skipped", not failed,
@@ -193,7 +251,13 @@ file(GLOB GERYON_CORE_LIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.c")
 
 function(geryon_add_core_hooks_test TEST_NAME TEST_SOURCE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE} ${GERYON_CORE_LIB_SOURCES})
+    # The recompiled core slice includes the KR-ML-DSA dispatchers
+    # (src/core/krmldsa{44,87}.c), which reference the per-backend tables
+    # gy_kr<set>_<backend>_backend. Those tables are the krmldsa OBJECT
+    # libraries (production geryon_core folds them in); a harness that rebuilds
+    # the core slice must link them too, or the dispatchers are undefined.
+    add_executable(${TEST_NAME} ${TEST_SOURCE} ${GERYON_CORE_LIB_SOURCES}
+        ${GERYON_KRMLDSA_OBJECTS})
     target_include_directories(${TEST_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/src/core")
@@ -229,6 +293,38 @@ foreach(test_src ${GERYON_CORE_HOOKS_TEST_SOURCES})
         geryon_add_core_hooks_test(${test_name} "${test_src}")
     endif()
 endforeach()
+
+# The KR-ML-DSA frozen self-KATs (D-QGS-10) SKIP (exit 77) until
+# their vectors are captured (krmldsa_kat.h KRMLDSA_KAT_POPULATED == 0), same
+# mechanism as the tests/group frozen-vector KATs above.  Capture with:
+#   ./tests/test_krmldsa_vectors --dump > tests/core_hooks/krmldsa_kat.h
+if(TARGET test_krmldsa_vectors)
+    set_tests_properties(test_krmldsa_vectors PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+# KR-ML-DSA sign/verify benchmark (the D-QGS-7 wire-freeze
+# gate).  A standalone, manually-run report (the libtalos_voleith examples/
+# model, same bench_util.h methodology), NOT a CTest case: timings are advisory
+# and machine-specific.  Links geryon_core to reach the internal gy_kr<set>_*
+# primitive (no public QSPGS API yet).  Run: ./tests/bench_krmldsa [iters].
+add_executable(bench_krmldsa bench/bench_krmldsa.c)
+target_include_directories(bench_krmldsa PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+target_compile_options(bench_krmldsa PRIVATE ${GERYON_WARNINGS})
+target_link_libraries(bench_krmldsa PRIVATE geryon_core sodium monocypher)
+
+# QSPGS [CFG+] section 7 operation-cost benchmark: AddMember
+# and RemoveMember at representative group sizes, cross-checked against
+# the design cost model.  Same standalone / advisory model as
+# bench_krmldsa; links the CLIENT facade geryon_qspgs for the section-5
+# composition primitives.  Run: ./tests/bench_qspgs_ops [iters].
+if(TARGET geryon_qspgs)
+    add_executable(bench_qspgs_ops bench/bench_qspgs_ops.c)
+    target_include_directories(bench_qspgs_ops PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+    target_compile_options(bench_qspgs_ops PRIVATE ${GERYON_WARNINGS})
+    target_link_libraries(bench_qspgs_ops PRIVATE geryon_qspgs sodium monocypher)
+endif()
 
 # Layer 2 (kex/) tests. These recompile the kex sources directly INTO the test
 # executable with -DGY_TEST_HOOKS so the D-X3DH-14 ordering counters are live
@@ -318,9 +414,11 @@ file(GLOB GERYON_RATCHET_HOOKS_TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/ratchet_hooks/test_*.c")
 
 function(geryon_add_ratchet_hooks_test TEST_NAME TEST_SOURCE)
+    # As with the core_hooks harness: the recompiled core slice pulls in the
+    # KR-ML-DSA dispatchers, so link the per-backend krmldsa OBJECT tables too.
     add_executable(${TEST_NAME} ${TEST_SOURCE}
         ${GERYON_CORE_LIB_SOURCES} ${GERYON_KEX_LIB_SOURCES}
-        ${GERYON_RATCHET_LIB_SOURCES})
+        ${GERYON_RATCHET_LIB_SOURCES} ${GERYON_KRMLDSA_OBJECTS})
     target_include_directories(${TEST_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/src/core"
@@ -349,6 +447,71 @@ foreach(test_src ${GERYON_RATCHET_HOOKS_TEST_SOURCES})
         geryon_add_ratchet_hooks_test(${test_name} "${test_src}" slow)
     else()
         geryon_add_ratchet_hooks_test(${test_name} "${test_src}")
+    endif()
+endforeach()
+
+# QSPGS tests that need the client GY_TEST_HOOKS forging seam (qspgs_hooks.h): the
+# malicious-admin E5 negative (D-QGS-13 E5)
+# needs a validly-signed-but-inconsistent core, which no public API can produce.
+# The QSPGS client facade EXTENDS the custodian, so this harness recompiles the
+# whole client stack (core + kex + ratchet + session + proto + the QSPGS client
+# slice) with -DGY_TEST_HOOKS and links the providers directly, NEVER the prebuilt
+# geryon_* libraries (built with GY_PRODUCTION_BUILD, which src/core/error.h makes
+# mutually exclusive with GY_TEST_HOOKS).  GY_PRODUCTION_BUILD is not set here.
+file(GLOB GERYON_SESSION_LIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/session/*.c")
+file(GLOB GERYON_PROTO_LIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/proto/*.c")
+# The QSPGS client slice (the common sk-free codec + the client operations and
+# facade); the server sources are not needed by the fetch-side negative.
+set(GERYON_QSPGS_CLIENT_SLICE
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_sizes.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_wire.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_keys.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_pers.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_join.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_field.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_ops.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_store.c"
+    "${CMAKE_SOURCE_DIR}/src/qspgs/qspgs_facade_client.c")
+file(GLOB GERYON_QSPGS_HOOKS_TEST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/qspgs_hooks/test_*.c")
+
+function(geryon_add_qspgs_hooks_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE}
+        ${GERYON_CORE_LIB_SOURCES} ${GERYON_KEX_LIB_SOURCES}
+        ${GERYON_RATCHET_LIB_SOURCES} ${GERYON_SESSION_LIB_SOURCES}
+        ${GERYON_PROTO_LIB_SOURCES} ${GERYON_QSPGS_CLIENT_SLICE}
+        ${GERYON_KRMLDSA_OBJECTS})
+    target_include_directories(${TEST_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/src/core"
+        "${CMAKE_SOURCE_DIR}/src/kex"
+        "${CMAKE_SOURCE_DIR}/src/ratchet"
+        "${CMAKE_SOURCE_DIR}/src/session"
+        "${CMAKE_SOURCE_DIR}/src/proto"
+        "${CMAKE_SOURCE_DIR}/src/qspgs"
+        "${CMAKE_SOURCE_DIR}/include"
+        ${GERYON_DECAF448_INTERNAL_INCLUDES})
+    target_compile_options(${TEST_NAME} PRIVATE ${GERYON_WARNINGS})
+    target_compile_definitions(${TEST_NAME} PRIVATE
+        GERYON_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        GY_TEST_HOOKS)
+    target_link_libraries(${TEST_NAME} PRIVATE sodium monocypher oqs decaf448)
+    add_dependencies(${TEST_NAME} liboqs_build decaf448_generate)
+
+    add_test(NAME ${TEST_NAME} COMMAND $<TARGET_FILE:${TEST_NAME}>)
+    if(ARGN)
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS "${ARGN}")
+    endif()
+endfunction()
+
+foreach(test_src ${GERYON_QSPGS_HOOKS_TEST_SOURCES})
+    get_filename_component(test_name "${test_src}" NAME_WE)
+    if(test_name MATCHES "_slow$")
+        geryon_add_qspgs_hooks_test(${test_name} "${test_src}" slow)
+    else()
+        geryon_add_qspgs_hooks_test(${test_name} "${test_src}")
     endif()
 endforeach()
 
@@ -479,7 +642,7 @@ add_test(NAME nm_scope_448
         "$<TARGET_FILE:geryon_proto>")
 set_tests_properties(nm_scope_448 PROPERTIES LABELS "audit")
 
-# Client/server scope audit (GER-M8-07, GROUP_SPEC section 8.3): the CLIENT group
+# Client/server scope audit (GROUP_SPEC section 8.3): the CLIENT group
 # archive must contain no ServerSecretParams-consuming operation. Build-artifact
 # based; guarded on the group vertical being configured.
 if(TARGET geryon_group)
@@ -487,6 +650,17 @@ if(TARGET geryon_group)
         COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/audit/nm_scope_server.sh"
             "$<TARGET_FILE:geryon_group>")
     set_tests_properties(nm_scope_server PROPERTIES LABELS "audit")
+endif()
+
+# QSPGS client/server scope audit (QSPGS_SPEC section 7.1): the
+# stateless server archive must carry no client-only symbol and no
+# rerandomization internal. Build-artifact based; guarded on the QSPGS server
+# target being configured.
+if(TARGET geryon_qsgroups_server)
+    add_test(NAME nm_scope_qspgs_server
+        COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/audit/nm_scope_qspgs_server.sh"
+            "$<TARGET_FILE:geryon_qsgroups_server>")
+    set_tests_properties(nm_scope_qspgs_server PROPERTIES LABELS "audit")
 endif()
 
 # Dependency-surface audit: geryon's own archives reference no C++

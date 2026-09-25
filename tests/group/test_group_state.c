@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * GER-M8-09 state/storage tests (GROUP_SPEC section 10, D-GRP-7): GroupID
+ * State/storage tests (GROUP_SPEC section 10, D-GRP-7): GroupID
  * determinism, rederive-from-GroupMasterKey (nothing derived cached), the
  * invitee install path reproducing identical params, credential / own-ProfileKey
  * record round-trips, the spec-true redemption-day validity predicate,
@@ -63,7 +63,7 @@ TEST(state_lifecycle)
                   3 + tier->master_key_len); /* ver || fmtver(2) || gmk */
 
         /* GroupID is the deterministic hash of the public params AND the bound
-         * format version (GER-GRPVER). */
+         * format version. */
         ASSERT_EQ(gy_group_id(tier, &pp, GY_GROUP_FORMAT_VERSION, gid2), GY_OK);
         ASSERT_MEMEQ(gid, gid2, GY_GROUP_ID_LEN);
 
@@ -103,7 +103,7 @@ TEST(state_lifecycle)
         }
 
         /* An out-of-window format version is refused, nothing stored
-         * (GER-GRPVER: an old client declines a newer group). */
+         * (format-version gate: an old client declines a newer group). */
         {
             struct mock_store m3;
             struct gy_group_store store3;

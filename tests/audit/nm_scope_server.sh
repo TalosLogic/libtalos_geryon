@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jason Crawford
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Client/server scope audit (GER-M8-07, GROUP_SPEC section 8.3): the CLIENT
+# Client/server scope audit (GROUP_SPEC section 8.3): the CLIENT
 # group archive (geryon_group) must contain NO ServerSecretParams-consuming
 # operation - the role split is structural, not documentary. This scans the
 # client archive for the server-role symbols as BOTH a definition (nm "T", the

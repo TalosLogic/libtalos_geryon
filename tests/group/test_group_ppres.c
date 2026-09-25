@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the ProfileKeyCredentialPresentation pi_P (GROUP_SPEC section 5.2.2,
- * GER-M8-04), both classical tiers.  The ProfileKeyCredential MAC is produced
+ * Tests for the ProfileKeyCredentialPresentation pi_P (GROUP_SPEC section
+ * 5.2.2), both classical tiers.  The ProfileKeyCredential MAC is produced
  * directly here (blind issuance, section 5.3, is a separate ticket); pi_P then
  * presents it with all four attributes hidden and both encryption predicates.
  * Honest presentations verify; a tampered proof/commitment and a wrong

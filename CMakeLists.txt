@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(libtalos_geryon
-    VERSION 1.4.0
+    VERSION 1.5.0
     LANGUAGES C
 )
 
@@ -199,7 +199,7 @@ set_target_properties(oqs PROPERTIES
 # -----------------------------------------------------------------------------
 # libdecaf / ed448goldilocks (pinned v1.0.3, e5cc624; git submodule).
 # DIRECT-compile integration of the 448 slice (D-XED-12 Build, amended
-# 2026-08-20; GER-M6-02): geryon compiles libdecaf's C sources for the 448 path
+# 2026-08-20): geryon compiles libdecaf's C sources for the 448 path
 # under its OWN static archive and runs libdecaf's Python generator via custom
 # commands. Deliberately NOT add_subdirectory and NOT ExternalProject, because
 # libdecaf's top-level project(... C CXX) forces a C++ toolchain (even though
@@ -306,7 +306,7 @@ decaf_generate("c/ed448goldilocks/eddsa.c"     curve ed448goldilocks "ed448goldi
 # libsodium's ristretto255 exposes only the one-way from_hash). With
 # USE_EXTERNAL_DECAF, geryon owns the whole decaf schnorr links, so the parent's
 # 448 target must carry curve25519 too (schnorr reuses it for the 255 tier).
-# GER-M8-02. Generated internal p25519 field header + generic source:
+# Generated internal p25519 field header + generic source:
 decaf_generate("c/p25519/f_field.h"   field p25519 "p25519/f_field.h"
     "per_field/f_field.tmpl.h")
 decaf_generate("c/p25519/f_generic.c" field p25519 "p25519/f_generic.c"
@@ -362,7 +362,7 @@ set_source_files_properties(
 # after add_subdirectory: USE_EXTERNAL_DECAF, no separate 255 target). These are
 # SEPARATE object libraries with their own include path because p448/f_field.h
 # and p25519/f_field.h share a name and cannot coexist on one target's includes;
-# upstream libdecaf and schnorr's cmake/decaf_slice.cmake mirror this. GER-M8-02.
+# upstream libdecaf and schnorr's cmake/decaf_slice.cmake mirror this.
 set(DECAF_255_FIELD_INC
     "${DECAF_SRC}/src/include"
     "${DECAF_SRC}/src/include/${DECAF_ARCH}"
@@ -424,7 +424,7 @@ target_include_directories(decaf448 PRIVATE
 )
 
 # The INTERNAL gf field headers are NOT part of decaf448's interface (they must
-# not reach the rest of geryon_core). GER-M6-04's ed448.c is the ONE geryon
+# not reach the rest of geryon_core). ed448.c is the ONE geryon
 # translation unit that borrows them, applied PRIVATE to that source alone.
 # Exposed here as a variable for that ticket (approach #3 shim, D-XED-13).
 set(GERYON_DECAF448_INTERNAL_INCLUDES
@@ -443,7 +443,11 @@ set(GERYON_DECAF448_INTERNAL_INCLUDES
 file(GLOB GERYON_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.c")
 
-add_library(geryon_core STATIC ${GERYON_CORE_SOURCES})
+# KR-ML-DSA (QSPGS): per-backend objects compiled against liboqs' mldsa-native
+# internals; the glob above deliberately does not descend into src/core/krmldsa.
+include(cmake/krmldsa.cmake)
+
+add_library(geryon_core STATIC ${GERYON_CORE_SOURCES} ${GERYON_KRMLDSA_OBJECTS})
 target_include_directories(geryon_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
 )
@@ -469,9 +473,9 @@ target_compile_definitions(geryon_core PRIVATE GY_PRODUCTION_BUILD)
 # was installed on the compiler's default include path.
 target_link_libraries(geryon_core PUBLIC sodium monocypher oqs)
 # libdecaf 448 archive: PRIVATE (D-XED-12) - only core/x448.c and core/ed448.c
-# (GER-M6-04) call into it; its public decaf.h include propagates to geryon_core
+# call into it; its public decaf.h include propagates to geryon_core
 # sources via the INTERFACE include, but the archive itself does not propagate
-# to higher layers. The internal gf headers reach ONLY ed448.c (GER-M6-04),
+# to higher layers. The internal gf headers reach ONLY ed448.c,
 # via GERYON_DECAF448_INTERNAL_INCLUDES.
 target_link_libraries(geryon_core PRIVATE decaf448)
 # ed448.c includes libdecaf's generated headers (decaf.h + the internal gf
@@ -588,7 +592,7 @@ add_subdirectory(third_party/libtalos_schnorr EXCLUDE_FROM_ALL)
 # linking it, never a compile-time flag (groups-separate-target, D-QGS-1); it is
 # compiled when a consumer or its tests link it.
 # -----------------------------------------------------------------------------
-# Client / server / common role split (GER-M8-07, GROUP_SPEC section 8.3): the
+# Client / server / common role split (GROUP_SPEC section 8.3): the
 # group vertical ships as TWO facades over shared internals so a client binary
 # contains no issuance code or any path consuming ServerSecretParams. The split
 # is STRUCTURAL (separate translation units, verified by tests/audit/
@@ -650,6 +654,73 @@ add_library(geryon_groups_server STATIC EXCLUDE_FROM_ALL
 target_compile_options(geryon_groups_server PRIVATE ${GERYON_WARNINGS})
 target_compile_definitions(geryon_groups_server PRIVATE GY_PRODUCTION_BUILD)
 target_link_libraries(geryon_groups_server PUBLIC geryon_group_internal)
+
+# -----------------------------------------------------------------------------
+# geryon_qspgs vertical: the quantum-safe private-group system (M9, QSPGS_SPEC),
+# a SECOND parallel group vertical (two-group-types, D-QGS-11) that ships beside
+# the classical geryon_group. It serves the HYBRID suites only and is built ON
+# the KR-ML-DSA base pair (folded into geryon_core) plus geryon_core's
+# HKDF / suite descriptor. EXCLUDE_FROM_ALL: opt-in by linking it, never a
+# compile-time flag (groups-separate-target).
+#
+# Client / server / common role split (QSPGS_SPEC section 7.1;
+# mirrors the M8 group split, GROUP_SPEC section 8.3). The split is STRUCTURAL
+# (separate translation units, verified by tests/audit/nm_scope_qspgs_server.sh),
+# not documentary:
+#   - COMMON (geryon_qspgs_internal): the sk-free shared layer - the section 4
+#     wire encode/decode, the frozen tier-hash helpers (C_UID, H(vkpsdn)), and
+#     the PUBLIC-verifier core / appendix signature checks (qspgs_wire.c). It
+#     carries no rerandomization secret; both facades link it.
+#   - CLIENT (geryon_qspgs): the section 5 member operations plus the key
+#     hierarchy, skpers, join PKE, and ek-field layer - everything that touches
+#     rrs / rho / skpsdn / ek / gk. Never linked into the server.
+#   - SERVER (geryon_qsgroups_server): the section 7.3 stateless checks over the
+#     common layer's public verifiers. A separate target, never linked into a
+#     client, holding no core secret parameter and no KR-ML-DSA internal.
+
+# Common internals: the sk-free wire + verify layer, over geryon_core (HKDF /
+# suite descriptor / util plus the KR-ML-DSA public verifiers folded
+# into it). PUBLIC linkage propagates the include dirs to both facades.
+add_library(geryon_qspgs_internal STATIC EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_sizes.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_wire.c")
+target_include_directories(geryon_qspgs_internal PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_options(geryon_qspgs_internal PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_qspgs_internal PRIVATE GY_PRODUCTION_BUILD)
+target_link_libraries(geryon_qspgs_internal PUBLIC geryon_core)
+
+# Client facade: the section 5 operations and the key hierarchy. Links the
+# common layer for the wire codecs and public verifiers.
+add_library(geryon_qspgs STATIC EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_keys.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_pers.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_join.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_field.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_ops.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_store.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_facade_client.c")
+target_compile_options(geryon_qspgs PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_qspgs PRIVATE GY_PRODUCTION_BUILD)
+# geryon_proto: the public client facade (geryon_qspgs.h) extends a borrowed
+# custodian for identity signing (custodian.h + its transitive proto/session/
+# core include dirs), exactly as the classical geryon_group client does.  A
+# QSPGS client is a messaging client, so this coupling is by design; the SERVER
+# target (geryon_qsgroups_server) links neither the client nor proto.
+target_link_libraries(geryon_qspgs PUBLIC geryon_qspgs_internal geryon_proto)
+
+# Server facade: the section 7.3 stateless checks (qspgs_server.c) and the
+# handle-free public surface over them, which decodes the opaque wire objects
+# internally (qspgs_facade_server.c, geryon_qsgroups_server.h). Links ONLY the
+# common layer; never the client target. Its only optional secret state is
+# send/fetch token check state, held by the deployer, not here.
+add_library(geryon_qsgroups_server STATIC EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_server.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/qspgs/qspgs_facade_server.c")
+target_compile_options(geryon_qsgroups_server PRIVATE ${GERYON_WARNINGS})
+target_compile_definitions(geryon_qsgroups_server PRIVATE GY_PRODUCTION_BUILD)
+target_link_libraries(geryon_qsgroups_server PUBLIC geryon_qspgs_internal)
 
 # -----------------------------------------------------------------------------
 # Tests: driven by tests/CMakeLists.txt, which builds each tests/core/test_*.c

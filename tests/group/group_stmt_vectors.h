@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Frozen self-KAT vectors for the credential/presentation
- * statement surface (GROUP_SPEC sections 3.2/3.3/6, GER-M8-04 +
- * GER-M8-05).  Captured from a clean build for the fixed UID,
+ * statement surface (GROUP_SPEC sections 3.2/3.3/6).  Captured
+ * from a clean build for the fixed UID,
  * ProfileKey, redemption date, and GroupMasterKey in
  * test_group_stmt_vectors.c.
  */

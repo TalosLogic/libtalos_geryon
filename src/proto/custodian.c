@@ -17,6 +17,19 @@
 #include "envelope.h"
 
 /*
+ * QSPGS identity-certification profile.  The custodian holds the identity key,
+ * so it owns the two objects that key may certify (D-QGS-6): it builds them
+ * here from typed fields and IK-signs them, never signing a caller blob.  The
+ * field widths come from the shared single-source constants (base vk from the
+ * core KR-ML-DSA tiers, uk / acq = master key, UID / GID fixed), so this layout
+ * cannot drift from the vertical's raw-key path.
+ */
+#include "encode.h"      /* GY_SUITE_H25519_512 / GY_SUITE_H448_1024. */
+#include "krmldsa44.h"   /* GY_KR44_VKB. */
+#include "krmldsa87.h"   /* GY_KR87_VKB. */
+#include "qspgs_const.h" /* GY_QSPGS_CTX_*, master-key / UID / GID widths. */
+
+/*
  * Fixed policy for the KEK-protector seam (D-CUST-1 item 4): AEGIS-256
  * default, and the compiled-in Argon2id floor as the operating point.
  * gy_custodian_create/open/change_credential expose no opslimit/memlimit
@@ -2591,5 +2604,187 @@ gy_custodian_sign(struct gy_custodian *c, gy_key_handle h,
     if (rc != GY_OK)
         return rc;
     *sig_len = c->desc->sig_len;
+    return GY_OK;
+}
+
+/*
+ * Per-suite widths of the fields inside the two certification objects.  Base vk
+ * is a KR-ML-DSA tier constant (core); the master-key width (uk / acq) is the
+ * shared 2*kappa.  0 means the suite is not a hybrid QSPGS tier.
+ */
+static size_t
+cust_qspgs_vkb_len(uint8_t suite_id)
+{
+    switch (suite_id) {
+    case GY_SUITE_H25519_512:
+        return GY_KR44_VKB;
+    case GY_SUITE_H448_1024:
+        return GY_KR87_VKB;
+    default:
+        return 0;
+    }
+}
+
+static size_t
+cust_qspgs_mkey_len(uint8_t suite_id)
+{
+    switch (suite_id) {
+    case GY_SUITE_H25519_512:
+        return GY_QSPGS_MASTER_KEY_255;
+    case GY_SUITE_H448_1024:
+        return GY_QSPGS_MASTER_KEY_448;
+    default:
+        return 0;
+    }
+}
+
+/*
+ * Internal IK dual-signer.  NOT exposed: the identity key signs only the two
+ * objects the typed wrappers below build, never a caller-chosen (purpose, obj)
+ * (SEC-v1.5.0 LOW-6).  Reproduces gy_qspgs_pers_sign's framing (XEdDSA over
+ * gy_info(suite, purpose) || obj, ML-DSA over obj with FIPS 204 ctx = that
+ * info) from the custodian's sealed identity material, so no identity secret
+ * leaves the custodian.  Verify (gy_qspgs_acct_verify / _invite_verify)
+ * rebuilds the object with the raw-key layout, so the lifecycle round-trip
+ * pins this layout to it: any divergence fails verification.
+ */
+static int
+cust_qspgs_identity_dual_sign(struct gy_custodian *c, const char *purpose,
+                              const uint8_t *obj, size_t objlen,
+                              uint8_t *ed_sig, size_t *ed_len,
+                              uint8_t *mldsa_sig, size_t *mldsa_len)
+{
+    struct gy_hybrid_custodian *hc;
+    uint8_t info[GY_APPKEY_INFO_MAX];
+    uint8_t signed_data[GY_APPKEY_INFO_MAX + GY_CUSTODIAN_SIGN_MAX];
+    size_t infolen;
+    int rc;
+
+    if (c == NULL || purpose == NULL || obj == NULL || ed_sig == NULL ||
+        ed_len == NULL || mldsa_sig == NULL || mldsa_len == NULL)
+        return GY_ERR_ARG;
+    CUST_ENTER(c);
+    if (!c->unlocked)
+        return GY_ERR_STATE;
+    if (!c->desc->is_hybrid)
+        return GY_ERR_UNSUPPORTED;
+    if (!c->have_identity)
+        return GY_ERR_STATE;
+    if (objlen > GY_CUSTODIAN_SIGN_MAX)
+        return GY_ERR_TOOLONG;
+
+    hc = cust_as_hybrid(c);
+
+    /* gy_suite_info is facade.h's rename of core's gy_info, so this builds the
+     * SAME domain string gy_qspgs_pers_sign feeds gy_info; the verify path
+     * (gy_qspgs_pers_verify) accepts the result unchanged. */
+    rc =
+        gy_suite_info(info, sizeof(info), &infolen, c->desc->suite_id, purpose);
+    if (rc != GY_OK)
+        return rc;
+
+    /* XEdDSA half: sign info || obj (prepended-info domain separation). */
+    memcpy(signed_data, info, infolen);
+    memcpy(signed_data + infolen, obj, objlen);
+    rc = c->desc->sign(ed_sig, hc->hik.curve_sk, signed_data, infolen + objlen);
+    if (rc != GY_OK)
+        goto out;
+
+    /* ML-DSA half: sign obj with FIPS 204 ctx = info. */
+    rc = c->desc->dsa_sign(mldsa_sig, hc->hik.mldsa_sk, obj, objlen, info,
+                           infolen);
+    if (rc != GY_OK)
+        goto out;
+
+    *ed_len = c->desc->sig_len;
+    *mldsa_len = c->desc->dsa_sig_len;
+
+out:
+    gy_wipe(signed_data, sizeof(signed_data));
+    gy_wipe(info, sizeof(info));
+    return rc;
+}
+
+int
+gy_custodian_qspgs_sign_reguser(struct gy_custodian *c, const uint8_t *vkb,
+                                const uint8_t *acq, uint8_t *ed_sig,
+                                size_t *ed_len, uint8_t *mldsa_sig,
+                                size_t *mldsa_len)
+{
+    uint8_t obj[GY_KR87_VKB + GY_QSPGS_MASTER_KEY_MAX];
+    size_t vkblen, mklen;
+    int rc;
+
+    if (c == NULL || vkb == NULL || acq == NULL)
+        return GY_ERR_ARG;
+    /* The custodian defines the object: vkbase || acq, both suite-sized. */
+    vkblen = cust_qspgs_vkb_len(c->desc->suite_id);
+    mklen = cust_qspgs_mkey_len(c->desc->suite_id);
+    if (vkblen == 0 || mklen == 0)
+        return GY_ERR_UNSUPPORTED;
+    memcpy(obj, vkb, vkblen);
+    memcpy(obj + vkblen, acq, mklen);
+    rc = cust_qspgs_identity_dual_sign(c, GY_QSPGS_CTX_REGUSER, obj,
+                                       vkblen + mklen, ed_sig, ed_len,
+                                       mldsa_sig, mldsa_len);
+    gy_wipe(obj, sizeof(obj));
+    return rc;
+}
+
+int
+gy_custodian_qspgs_sign_invaccept(struct gy_custodian *c, const uint8_t *uid,
+                                  size_t uidlen, const uint8_t *uk,
+                                  const uint8_t *gid, uint8_t *ed_sig,
+                                  size_t *ed_len, uint8_t *mldsa_sig,
+                                  size_t *mldsa_len)
+{
+    uint8_t
+        obj[1 + GY_QSPGS_UID_LEN + GY_QSPGS_MASTER_KEY_MAX + GY_QSPGS_GID_LEN];
+    size_t mklen, off;
+    int rc;
+
+    if (c == NULL || uid == NULL || uk == NULL || gid == NULL)
+        return GY_ERR_ARG;
+    /* UID is fixed width (SEC-v1.5.0 LOW-2); the custodian enforces it here so
+     * the object it certifies can only be the canonical shape. */
+    if (uidlen != GY_QSPGS_UID_LEN)
+        return GY_ERR_ARG;
+    mklen = cust_qspgs_mkey_len(c->desc->suite_id);
+    if (mklen == 0)
+        return GY_ERR_UNSUPPORTED;
+    /* The custodian defines the object: uidlen(1) || UID || uk || GID. */
+    off = 0;
+    obj[off++] = (uint8_t)uidlen;
+    memcpy(obj + off, uid, uidlen);
+    off += uidlen;
+    memcpy(obj + off, uk, mklen);
+    off += mklen;
+    memcpy(obj + off, gid, GY_QSPGS_GID_LEN);
+    off += GY_QSPGS_GID_LEN;
+    rc = cust_qspgs_identity_dual_sign(c, GY_QSPGS_CTX_INVACCEPT, obj, off,
+                                       ed_sig, ed_len, mldsa_sig, mldsa_len);
+    gy_wipe(obj, sizeof(obj));
+    return rc;
+}
+
+int
+gy_custodian_identity_dual_pub(struct gy_custodian *c, const uint8_t **curve_pk,
+                               const uint8_t **mldsa_pk)
+{
+    struct gy_hybrid_custodian *hc;
+
+    if (c == NULL || curve_pk == NULL || mldsa_pk == NULL)
+        return GY_ERR_ARG;
+    CUST_ENTER(c);
+    if (!c->unlocked)
+        return GY_ERR_STATE;
+    if (!c->desc->is_hybrid)
+        return GY_ERR_UNSUPPORTED;
+    if (!c->have_identity)
+        return GY_ERR_STATE;
+
+    hc = cust_as_hybrid(c);
+    *curve_pk = hc->hik.pub.base.curve.pk;
+    *mldsa_pk = hc->hik.pub.mldsa_pk;
     return GY_OK;
 }

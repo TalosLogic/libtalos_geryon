@@ -83,7 +83,7 @@ struct gy_group_tier {
     int (*encode_uid)(uint8_t *point, const uint8_t *uid);
     int (*encode_pk)(uint8_t *point, const uint8_t *pk);
 
-    /* EncodeToG, decode direction (verifiable encryption, GER-M8-05).  UID
+    /* EncodeToG, decode direction (verifiable encryption).  UID
      * decode is self-disambiguating (single answer).  ProfileKey decode returns
      * the full candidate list (ProfileKey is 32 bytes on both tiers, so the
      * candidate width is tier-uniform); *count is a public function of the

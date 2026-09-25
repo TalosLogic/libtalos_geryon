@@ -14,7 +14,7 @@
 #include "util.h"
 
 /*
- * Blind-issuance client role (GER-M8-07): the requester side (build the blind
+ * Blind-issuance client role: the requester side (build the blind
  * ProfileKeyCredentialRequest and prove pi_BR; verify pi_BI and decrypt the
  * credential) plus the deterministic ProfileKeyCommitment.  No
  * ServerSecretParams; sk-free.  The server's blind-issue half is in

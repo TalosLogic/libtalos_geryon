@@ -13,7 +13,7 @@
 
 /*
  * Sesame receive path (the Sesame specification, section 3.4, D-SES-6,
- * D-X3DH-10, D-DR-17).  The milestone's security-critical operation: it decides
+ * D-X3DH-10, D-DR-17).  The receive path's security-critical operation: it decides
  * which session (if any) owns an incoming message, decrypts it, and commits the
  * resulting state transactionally, all under header encryption where the wire
  * carries no routing aid (D-SES-6.6).
@@ -37,7 +37,7 @@
 #define GY_MSG_DR 0x02   /* inner is a Double Ratchet frame (D-DR-16) */
 /*
  * 0x03 is RESERVED for the group vertical's GROUP_KEY_DISTRIBUTION frame
- * (GY_MSG_GROUP_KEY_DISTRIBUTION, src/group/group_wire.h, GER-M8-08): a D-GEN-1
+ * (GY_MSG_GROUP_KEY_DISTRIBUTION, src/group/group_wire.h): a D-GEN-1
  * envelope whose payload is a bare GroupMasterKey.  It is framed and parsed by
  * the group vertical, NOT here; the messaging codec (proto/envelope.c) stays
  * group-unaware and correctly rejects 0x03 as a reserved msg_type.  Messaging

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Independent verify-equation oracle for geryon's classical group KVAC/NIZK
-# layer (GROUP_SPEC sections 5.1-5.3, GER-M8-04/05 task 5, D-GEN-6), BOTH tiers.
+# layer (GROUP_SPEC sections 5.1-5.3, D-GEN-6), BOTH tiers.
 #
 # geryon's group proofs are clean-room and DELIBERATELY not zkgroup-byte-
 # compatible (D-GRP-4), so no zkgroup/poksho byte-compat or interop cross-check

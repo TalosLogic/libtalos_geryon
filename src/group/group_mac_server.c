@@ -11,7 +11,7 @@
 #include "util.h"
 
 /*
- * The [CPZ] section 3.1 algebraic MAC (GER-M8-07 server role): KeyGen, MAC,
+ * The [CPZ] section 3.1 algebraic MAC (server role): KeyGen, MAC,
  * Verify, and iparams derivation, all under ServerSecretParams.  Every function
  * here consumes a gy_group_server_secret, so this TU is SERVER-ONLY and must not
  * appear in the client archive (nm_scope_server.sh, GROUP_SPEC section 8.3).

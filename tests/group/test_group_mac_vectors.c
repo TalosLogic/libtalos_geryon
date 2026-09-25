@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Frozen self-KAT check for the algebraic MAC (GROUP_SPEC section 4,
- * GER-M8-03).  For fixed ServerSecretParams scalars, fixed attribute points,
+ * Frozen self-KAT check for the algebraic MAC (GROUP_SPEC section 4).  For
+ * fixed ServerSecretParams scalars, fixed attribute points,
  * and fixed MAC randomness (t, u), recomputes iparams (C_W, I) and the MAC tag
  * (t, U, V) for both credential-family shapes (auth n' = 3, profile n' = 4) on
  * both tiers, and asserts they reproduce the committed bytes in
@@ -187,7 +187,7 @@ dump(void)
            " * SPDX-License-Identifier: AGPL-3.0-only\n"
            " *\n"
            " * Frozen self-KAT vectors for the algebraic MAC (GROUP_SPEC\n"
-           " * section 4, GER-M8-03).  Captured from a clean build for the\n"
+           " * section 4).  Captured from a clean build for the\n"
            " * fixed ServerSecretParams scalars, attributes, and (t, u) in\n"
            " * test_group_mac_vectors.c.\n"
            " */\n\n");

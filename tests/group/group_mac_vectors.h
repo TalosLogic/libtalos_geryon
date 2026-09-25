@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Frozen self-KAT vectors for the algebraic MAC (GROUP_SPEC
- * section 4, GER-M8-03).  Captured from a clean build for the
+ * section 4).  Captured from a clean build for the
  * fixed ServerSecretParams scalars, attributes, and (t, u) in
  * test_group_mac_vectors.c.
  */

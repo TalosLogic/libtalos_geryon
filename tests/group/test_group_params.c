@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the classical group system parameters (GROUP_SPEC section 2,
- * GER-M8-02): tier binding, the 20 NUMS generators, GroupMasterKey -> Derive ->
+ * Tests for the classical group system parameters (GROUP_SPEC section 2):
+ * tier binding, the 20 NUMS generators, GroupMasterKey -> Derive ->
  * GroupSecretParams, and GroupPublicParams (A, B), on both classical tiers.
  *
  * There is no external oracle for these constructions (they are geryon's own

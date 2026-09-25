@@ -516,4 +516,63 @@ int gy_custodian_sign(struct gy_custodian *c, gy_key_handle sak,
                       const uint8_t *msg, size_t msg_len, uint8_t *sig,
                       size_t *sig_len);
 
+/*
+ * Sign the two QSPGS identity-anchored objects with the hybrid IDENTITY key
+ * (D-QGS-6, footnote 7).  The custodian holds the identity key, so it OWNS the
+ * definition of the only two objects that key may certify (X.509 KeyUsage / EKU
+ * model, SEC-v1.5.0 LOW-6): each call takes the object's typed fields and the
+ * custodian builds the byte layout and picks the domain-separation label
+ * itself.  There is deliberately no generic (purpose, obj) entry point - a
+ * caller can never make the identity key sign an arbitrary blob or under an
+ * arbitrary label, which would be a standing deniability-destruction oracle
+ * (CUSTODY_SPEC section 10).
+ *
+ *   _reguser   builds vkbase || acq and signs it under "qspgs-reguser".
+ *   _invaccept builds uidlen(1) || UID || uk || GID and signs it under
+ *              "qspgs-invaccept"; uidlen must be the fixed GY_QSPGS_UID_LEN.
+ *
+ * Both reproduce gy_qspgs_pers_sign's framing exactly (XEdDSA over
+ * gy_suite_info(suite, label) || obj, ML-DSA over obj with FIPS-204 ctx = that
+ * info), but source the keys from the custodian's sealed material so no
+ * identity secret key ever leaves it.  Field widths come from the shared
+ * single-source constants keyed by suite, and verify (gy_qspgs_acct_verify /
+ * _invite_verify) rebuilds the object with the raw-key layout, so the lifecycle
+ * round-trip pins this layout to it.
+ *
+ * Hybrid custodians only (classical / non-QSPGS suite is GY_ERR_UNSUPPORTED);
+ * the identity must be generated and the custodian unlocked (else
+ * GY_ERR_STATE).  A NULL field pointer, or an invaccept uidlen other than
+ * GY_QSPGS_UID_LEN, is GY_ERR_ARG.  ed_sig receives the XEdDSA signature
+ * (desc->sig_len bytes, *ed_len) and mldsa_sig the ML-DSA signature
+ * (desc->dsa_sig_len bytes, *mldsa_len).  INTERNAL, kept OUT of geryon.h; only
+ * the in-tree QSPGS facade reaches these.  Returns GY_OK or a negative
+ * GY_ERR_*.
+ */
+int gy_custodian_qspgs_sign_reguser(struct gy_custodian *c, const uint8_t *vkb,
+                                    const uint8_t *acq, uint8_t *ed_sig,
+                                    size_t *ed_len, uint8_t *mldsa_sig,
+                                    size_t *mldsa_len);
+int gy_custodian_qspgs_sign_invaccept(struct gy_custodian *c,
+                                      const uint8_t *uid, size_t uidlen,
+                                      const uint8_t *uk, const uint8_t *gid,
+                                      uint8_t *ed_sig, size_t *ed_len,
+                                      uint8_t *mldsa_sig, size_t *mldsa_len);
+
+/*
+ * Point *curve_pk and *mldsa_pk at the hybrid identity's public keys (the
+ * XEdDSA curve public key and the ML-DSA public key), the verification
+ * counterparts to the QSPGS identity signers above.  The pointers reference the
+ * custodian's own material and stay valid while c is open.  A peer needs these
+ * to verify this identity's QSPGS registration / invite objects (the QSPGS
+ * facade's accept-acquaintance path takes a granter's copy).
+ *
+ * Hybrid custodians only (classical is GY_ERR_UNSUPPORTED); the identity must
+ * be generated and the custodian unlocked (else GY_ERR_STATE).  INTERNAL, kept
+ * OUT of geryon.h like the dual-sign seam.  Returns GY_OK or a negative
+ * GY_ERR_*.
+ */
+int gy_custodian_identity_dual_pub(struct gy_custodian *c,
+                                   const uint8_t **curve_pk,
+                                   const uint8_t **mldsa_pk);
+
 #endif /* GY_CUSTODIAN_H */

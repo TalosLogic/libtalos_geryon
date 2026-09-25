@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Constant-time timing targets for the secret-keyed SERVER operations
- * (GROUP_SPEC section 8.4, GER-M8-07), both classical tiers.  ServerSecretParams
+ * (GROUP_SPEC section 8.4), both classical tiers.  ServerSecretParams
  * are long-lived secret keys, so issuance, blind issuance, and the presentation
  * Z-recomputation must not leak the key through timing.  Each target is a
  * fixed-vs-random test in the SECRET KEY: the two classes derive a

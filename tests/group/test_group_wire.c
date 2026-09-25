@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * GER-M8-08 wire-format tests (GROUP_SPEC section 9): round-trip, strict-parse
- * negatives, and Table 1 wire footprints for the objects GER-M8-08 adds - the
+ * Wire-format tests (GROUP_SPEC section 9): round-trip, strict-parse
+ * negatives, and Table 1 wire footprints for the blind-issuance objects - the
  * section 3.3 blind-issuance objects (ProfileKeyCommitment / Request /
  * Response), the ProfileKeyVersion (grp-pkv), and the GROUP_KEY_DISTRIBUTION
  * envelope frame (section 9 item 4).  Both classical tiers.

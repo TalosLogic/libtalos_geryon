@@ -1,7 +1,7 @@
 # group_kvac oracle (both tiers)
 
 Independent verify-equation oracle for geryon's classical group KVAC/NIZK layer
-(GROUP_SPEC sections 5.1-5.3, GER-M8-04/05 task 5, D-GEN-6).
+(GROUP_SPEC sections 5.1-5.3, D-GEN-6).
 
 ## Why this is not a zkgroup cross-check
 

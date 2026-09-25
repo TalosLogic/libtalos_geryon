@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for AuthCredential issuance and the pi_I proof (GROUP_SPEC section 5.1,
- * GER-M8-04), both classical tiers: an honest issuance verifies; a wrong UID,
+ * Tests for AuthCredential issuance and the pi_I proof (GROUP_SPEC section
+ * 5.1), both classical tiers: an honest issuance verifies; a wrong UID,
  * wrong redemption date, tampered proof, or tampered MAC is rejected; and the
  * AuthCredentialResponse encoding round-trips at the expected size.
  */

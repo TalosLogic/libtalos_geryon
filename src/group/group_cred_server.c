@@ -14,7 +14,7 @@
 #include "util.h"
 
 /*
- * AuthCredential server role (GER-M8-07): non-blind issuance under
+ * AuthCredential server role: non-blind issuance under
  * ServerSecretParams sk_A.  This TU consumes a gy_group_server_secret and is
  * therefore SERVER-ONLY; it is linked into geryon_groups_server and MUST NOT
  * appear in the client archive (enforced by nm_scope_server.sh, GROUP_SPEC

@@ -54,19 +54,29 @@ int gy_mlkem1024_encaps(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
  */
 int gy_mlkem1024_decaps(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
 
-#ifdef GY_TEST_HOOKS
 /*
- * Derandomized seams for FIPS 203 ACVP known-answer tests ONLY (D-PQ-3),
- * compiled solely under GY_TEST_HOOKS so no test-only symbol has unconditional
- * external linkage (the M0-L3 lesson).  Production code must use the randomized
- * entry points above.  keypair takes a 64-byte d||z seed; encaps takes a
- * 32-byte m.  Decaps needs no seam (it is deterministic; ACVP decaps VAL cases,
- * including implicit rejection, run the production path unchanged).
+ * Deterministic keypair generation from a 64-byte d||z seed (FIPS 203
+ * KeyGen_internal).  PRODUCTION entry: the QSPGS join keypair is
+ * rederived from a gk-derived seed by every member, so it must exist outside
+ * GY_TEST_HOOKS.  Same guarantees as gy_mlkem1024_keypair; the seed carries the
+ * entropy, so the caller MUST supply a seed with full key strength (a KDF over
+ * a high-entropy root, never a low-entropy value).  Returns GY_OK or GY_ERR_*.
  */
 #define GY_MLKEM1024_KEYPAIR_SEED 64
-#define GY_MLKEM1024_ENCAPS_SEED 32
 
 int gy_mlkem1024_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *seed);
+
+#ifdef GY_TEST_HOOKS
+/*
+ * Derandomized encaps seam for FIPS 203 ACVP known-answer tests ONLY (D-PQ-3),
+ * compiled solely under GY_TEST_HOOKS so no test-only symbol has unconditional
+ * external linkage (the M0-L3 lesson).  Production code encapsulates with fresh
+ * randomness through gy_mlkem1024_encaps.  encaps takes a 32-byte m.  Decaps
+ * needs no seam (it is deterministic; ACVP decaps VAL cases, including implicit
+ * rejection, run the production path unchanged).
+ */
+#define GY_MLKEM1024_ENCAPS_SEED 32
+
 int gy_mlkem1024_encaps_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk,
                                const uint8_t *seed);
 #endif /* GY_TEST_HOOKS */

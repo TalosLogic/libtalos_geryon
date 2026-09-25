@@ -96,7 +96,7 @@ int gy_group_master_key(const struct gy_group_tier *tier, uint8_t *out);
  * item 3, section 6.2).  gmk_len must equal tier->master_key_len.  One HKDF
  * expansion per encryption scheme (uid -> (a1,a2), pk -> (b1,b2)), okm
  * partitioned into wide segments and reduced to canonical scalars via the
- * provider hash_to_scalar.  Deterministic: the KAT anchor of this milestone.
+ * provider hash_to_scalar.  Deterministic: the KAT anchor for group params.
  * Returns GY_OK or a negative code; sp is zeroized on failure.
  */
 int gy_group_secret_derive(const struct gy_group_tier *tier, const uint8_t *gmk,
@@ -118,7 +118,7 @@ int gy_group_public_derive(const struct gy_group_tier *tier,
 /*
  * Canonically encode GroupPublicParams (A, B) as the tagged object
  * GY_GOBJ_GROUP_PUBLIC (section 3.4), for the founder to register a group with
- * the server (GER-M8-11).  out holds GY_GROUP_OBJ_HDR_LEN + 2*tier->point_len
+ * the server.  out holds GY_GROUP_OBJ_HDR_LEN + 2*tier->point_len
  * bytes.  Returns GY_OK and sets *outlen, GY_ERR_TOOLONG on a short buffer, or
  * GY_ERR_ARG on bad input.
  */

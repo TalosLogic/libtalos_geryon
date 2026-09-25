@@ -17,7 +17,7 @@
 
 /*
  * AuthCredentialPresentation pi_A (GROUP_SPEC section 5.2 / 5.2.1, [CPZ]
- * section 5.12), GER-M8-04.  A group member presents its AuthCredential (t,U,V)
+ * section 5.12).  A group member presents its AuthCredential (t,U,V)
  * to the server, hiding M1, M2 (its UID's group attributes) while revealing the
  * redemption date, and jointly proving the credential is valid AND that the
  * attached UidCiphertext (E_A1, E_A2) encrypts the same UID (the section 6.5

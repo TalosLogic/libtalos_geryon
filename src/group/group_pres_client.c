@@ -16,7 +16,7 @@
 #include "util.h"
 
 /*
- * Credential presentation client role (GER-M8-07): the member-side proving of
+ * Credential presentation client role: the member-side proving of
  * pi_A / pi_P.  Uses GroupSecretParams (a1,a2,b1,b2), never ServerSecretParams,
  * so it is sk-free.  The verification halves live in group_pres_server.c.
  */

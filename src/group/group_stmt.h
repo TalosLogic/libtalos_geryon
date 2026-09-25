@@ -13,7 +13,7 @@
 #include "group_tier.h" /* GY_GROUP_MAX_EQ/MAX_K/POINT_MAX/SCALAR_MAX */
 
 /*
- * Shared proof-statement assembly for the credential NIZKs (GER-M8-07, the
+ * Shared proof-statement assembly for the credential NIZKs (the
  * client/server split, GROUP_SPEC section 8.3).  The five build_pi_* helpers and
  * the handful of arithmetic helpers below are the ONLY code the client-role and
  * server-role translation units share; they are sk-free (they take public

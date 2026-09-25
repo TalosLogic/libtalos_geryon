@@ -67,7 +67,15 @@ gy_mlkem512_decaps(uint8_t *ss, const uint8_t *ct, const uint8_t *sk)
     return GY_OK;
 }
 
-#ifdef GY_TEST_HOOKS
+/*
+ * Deterministic (derandomized) keypair generation is a PRODUCTION entry, not a
+ * test-only seam: the QSPGS join keypair (ipk, isk) is rederived by
+ * every group member from group-key material (QSPGS_SPEC.md sections 2.2, 9),
+ * so the seed comes from a KDF over gk, never from the RNG.  It is FIPS 203
+ * KeyGen_internal(d || z) and carries the same guarantees as the randomized
+ * entry.  The encaps derandomized seam below stays test-only (ACVP KATs); the
+ * join seal encapsulates with fresh randomness through gy_mlkem512_encaps.
+ */
 int
 gy_mlkem512_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *seed)
 {
@@ -81,6 +89,7 @@ gy_mlkem512_keypair_derand(uint8_t *pk, uint8_t *sk, const uint8_t *seed)
     return GY_OK;
 }
 
+#ifdef GY_TEST_HOOKS
 int
 gy_mlkem512_encaps_derand(uint8_t *ct, uint8_t *ss, const uint8_t *pk,
                           const uint8_t *seed)

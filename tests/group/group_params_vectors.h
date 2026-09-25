@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Frozen self-KAT vectors for the classical group system
- * parameters (GROUP_SPEC section 2, GER-M8-02).  Captured from a
+ * parameters (GROUP_SPEC section 2).  Captured from a
  * clean build for the fixed GroupMasterKey k0[i] = i + 1.
  */
 

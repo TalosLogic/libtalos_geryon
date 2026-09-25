@@ -17,6 +17,7 @@ add_executable(geryon_dudect
     targets_c448.c
     targets_group.c
     targets_group_server.c
+    targets_qspgs.c
     dudect_main.c
 )
 target_include_directories(geryon_dudect PRIVATE
@@ -42,6 +43,13 @@ target_link_libraries(geryon_dudect PRIVATE decaf448)
 # 8.4 secret-keyed server targets (targets_group_server.c: issuance, blind
 # issuance, presentation-verify Z-recompute).
 target_link_libraries(geryon_dudect PRIVATE geryon_group geryon_groups_server)
+# The QSPGS / KR-ML-DSA secret-handling targets (targets_qspgs.c, SEC-v1.5.0
+# LOW-5): geryon_qspgs resolves the client field read path
+# (gy_qspgs_member_ct_open) and the KR-ML-DSA glue (via geryon_core), and
+# geryon_qsgroups_server resolves the section 7.3 bearer-token check.  Both are
+# EXCLUDE_FROM_ALL verticals, so link them explicitly (mirroring the group
+# targets above); they carry the src/qspgs include dir transitively.
+target_link_libraries(geryon_dudect PRIVATE geryon_qspgs geryon_qsgroups_server)
 add_dependencies(geryon_dudect liboqs_build)
 if(NOT APPLE)
     target_link_libraries(geryon_dudect PRIVATE m)

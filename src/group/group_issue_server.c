@@ -14,7 +14,7 @@
 #include "util.h"
 
 /*
- * Blind-issuance server role (GER-M8-07): verify pi_BR against the stored
+ * Blind-issuance server role: verify pi_BR against the stored
  * commitment, homomorphically form the blinded MAC under ServerSecretParams
  * sk_P, and prove pi_BI.  Consumes a gy_group_server_secret, so this TU is
  * SERVER-ONLY (nm_scope_server.sh, GROUP_SPEC section 8.3).

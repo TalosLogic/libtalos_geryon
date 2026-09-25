@@ -17,8 +17,8 @@
 #include "group_tier.h"
 
 /*
- * Group state, storage, and zeroization (GROUP_SPEC section 10, D-GRP-7),
- * GER-M8-09.  Client-side only: the server target is stateless (D-GRP-2).
+ * Group state, storage, and zeroization (GROUP_SPEC section 10, D-GRP-7).
+ * Client-side only: the server target is stateless (D-GRP-2).
  *
  * Rederive, never cache.  The only per-group secret at rest is the
  * GroupMasterKey; GroupSecretParams / GroupPublicParams are recomputed from it
@@ -36,7 +36,7 @@
 #define GY_GROUP_REC_VERSION 0x01
 
 /*
- * Group FORMAT version (GER-GRPVER): the group's capability epoch, chosen at
+ * Group FORMAT version: the group's capability epoch, chosen at
  * creation, immutable for the life of the group, bound into the GroupID, and
  * carried in the master-key record and the GROUP_KEY_DISTRIBUTION envelope as a
  * 2-byte big-endian field.  A client refuses a group whose version is outside
@@ -61,8 +61,8 @@ struct gy_group_auth_credential {
 /*
  * Compute the local GroupID: the first GY_GROUP_ID_LEN bytes of the tier suite
  * hash over suite_id || format_version(BE16) || A || B (GroupPublicParams).
- * Binding the format version makes the group's capability epoch tamper-evident
- * (GER-GRPVER).  Deterministic and recomputable from the GroupMasterKey and the
+ * Binding the format version makes the group's capability epoch tamper-evident.
+ * Deterministic and recomputable from the GroupMasterKey and the
  * format version alone (no cached state).  Returns GY_OK or a negative GY_ERR_*.
  */
 int gy_group_id(const struct gy_group_tier *tier,
@@ -116,8 +116,8 @@ int gy_group_load(const struct gy_group_store *store,
                   struct gy_group_public_params *out_pp);
 
 /*
- * Load the raw GroupMasterKey for group_id (for GROUP_KEY_DISTRIBUTION export,
- * GER-M8-11): the only path that surfaces the key itself, all others rederive.
+ * Load the raw GroupMasterKey for group_id (for GROUP_KEY_DISTRIBUTION
+ * export): the only path that surfaces the key itself, all others rederive.
  * out holds cap >= tier->master_key_len bytes; *out_len is set to master_key_len.
  * Returns GY_OK, GY_ERR_NOT_FOUND if no record, GY_ERR_VERIFY on a malformed
  * record, or a negative GY_ERR_*.
@@ -128,7 +128,7 @@ int gy_group_master_key_load(const struct gy_group_store *store,
                              uint8_t *out, size_t cap, size_t *out_len);
 
 /*
- * Load a group's format version (GER-GRPVER) from its master-key record, without
+ * Load a group's format version from its master-key record, without
  * surfacing the key.  Used to frame the GROUP_KEY_DISTRIBUTION envelope and by
  * the public version accessor.  Returns GY_OK, GY_ERR_NOT_FOUND if no record,
  * GY_ERR_VERIFY on a malformed record, or a negative GY_ERR_*.
@@ -209,7 +209,7 @@ int gy_group_own_pk_load(const struct gy_group_store *store,
 void gy_group_auth_credential_clear(struct gy_group_auth_credential *cred);
 
 /* ------------------------------------------------------------------------- *
- * Store-integrated operation wrappers (GER-M8-09 increment 3).  Each runs the
+ * Store-integrated operation wrappers.  Each runs the
  * corresponding client operation and, ON SUCCESS ONLY, persists its output
  * through the store, matching how the one-on-one messaging operations
  * (gy_send / gy_recv) commit records at their single success point.  The

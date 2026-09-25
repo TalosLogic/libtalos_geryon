@@ -16,7 +16,7 @@
 
 /*
  * Blind issuance of ProfileKeyCredentials (GROUP_SPEC section 5.3, [CPZ]
- * section 5.10), GER-M8-05.  The requester ElGamal-encrypts the blind
+ * section 5.10).  The requester ElGamal-encrypts the blind
  * attributes M3, M4 under an ephemeral key and proves (pi_BR) the ciphertexts
  * are consistent with its ProfileKeyCommitment; the server MACs the revealed
  * attributes (M1, M2), homomorphically folds in y3, y4 to obtain an encryption
@@ -123,7 +123,7 @@ int gy_group_pk_blind_receive(const struct gy_group_tier *tier,
                               struct gy_group_mac_tag *out_cred);
 
 /* ------------------------------------------------------------------------- *
- * Canonical wire encodings (GROUP_SPEC section 9, GER-M8-08).  Each is a
+ * Canonical wire encodings (GROUP_SPEC section 9).  Each is a
  * tagged top-level object (GY_GOBJ_PK_COMMITMENT / _REQUEST / _RESPONSE); the
  * layout is the object header followed by the struct fields in declaration
  * order, tier-canonical points and scalars, fixed width, no TLV.  Decode is

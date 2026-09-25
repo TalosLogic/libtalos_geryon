@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for blind issuance of ProfileKeyCredentials (GROUP_SPEC section 5.3,
- * GER-M8-05), both classical tiers.  End to end: commit -> request (pi_BR) ->
+ * Tests for blind issuance of ProfileKeyCredentials (GROUP_SPEC section 5.3),
+ * both classical tiers.  End to end: commit -> request (pi_BR) ->
  * blind issue (pi_BI) -> receive -> the recovered credential (t,U,V) is a valid
  * ProfileKeyCredential, confirmed by presenting it through pi_P.  A forged
  * pi_BR, a wrong commitment, a forged pi_BI, and a tampered response are each

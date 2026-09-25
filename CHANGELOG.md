@@ -3,6 +3,59 @@
 Broad strokes per release. Architecture and rationale live in
 [docs/DESIGN.md](docs/DESIGN.md).
 
+## [1.5.0] [2026-09-24]
+
+Adds an opt-in quantum-safe private group system (QSPGS, the [CFG+] design),
+geryon's post-quantum group vertical. Like the classical group system it is a
+separate set of libraries (all `EXCLUDE_FROM_ALL`) and two new public headers
+(`include/geryon_qspgs.h`, `include/geryon_qsgroups_server.h`), so the messaging
+library and the classical group system are behaviorally unchanged and a
+deployment that does not use quantum-safe groups links none of it. It ships side
+by side with the classical group system, not as a replacement. All group
+authentication is post-quantum: KR-ML-DSA (rerandomizable ML-DSA) at the two
+hybrid tiers (ML-DSA-44 and ML-DSA-87). See
+[docs/QSPGS_SPEC.md](docs/QSPGS_SPEC.md).
+
+- **Unlinkable post-quantum group membership.** Members present under
+  per-version rerandomized verification keys, so the server and other members
+  cannot link a member's actions across group versions or to its long-term key.
+  Rerandomizable ML-DSA (KR-ML-DSA) provides the unlinkable signatures; the
+  identity key certifies each member's base verification key and per-epoch user
+  key, binding membership to the existing custodied identity without a transcript
+  signature.
+
+- **Client extends the custodian; server is separate and stateless.** The client
+  API (`include/geryon_qspgs.h`) seals all group state into the existing
+  custodian store and caches nothing derived. The server API
+  (`include/geryon_qsgroups_server.h`) holds only the service keys and verifies
+  cores, appendix lines, and bearer tokens; the client/server split is enforced
+  at link time (a client binary cannot carry server-side check code).
+
+- **Versioned group state with an appendix log.** A group advances through
+  admin-signed cores (the authoritative membership snapshot) and member-appended
+  lines (joins, leaves, key refreshes, attribute changes) that an admin folds
+  into a later core. Each group is created at an immutable format epoch and AEAD
+  choice bound into its signed header, so an existing group never changes shape
+  under the clients already in it. Rotating edits stage the new group key and
+  commit only on server acceptance, so a rejected write never strands the admin.
+
+- **Field encryption pinned per group.** The admin pins the group's field AEAD at
+  creation: ChaCha20-Poly1305 (default) or AEGIS-256. The choice is immutable
+  across every edit, so there is no downgrade path, mirroring messaging's
+  pin-at-establishment.
+
+- **Fixed-width member identities.** Member UIDs are a fixed 16 bytes, so a
+  corrupt server learns member indices and activity but never a per-entry length
+  class it could intersect with the public account directory.
+
+- **New dependency.** The KR-ML-DSA layer composes liboqs ML-DSA; no new
+  third-party dependency is added beyond the liboqs already carried for the
+  hybrid messaging suites.
+
+The messaging suites, the classical group system, the wire format
+(`protocol_version` 0x01), and the messaging stored-blob formats are unchanged;
+this release is additive over v1.4.0.
+
 ## [1.4.0] [2026-09-10]
 
 Adds an opt-in classical private group system (the [CPZ] design), geryon's first

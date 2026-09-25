@@ -17,8 +17,9 @@
  * primitive under both credential families.  This layer is deliberately
  * credential-agnostic: it operates on an array of group-element attributes Mi
  * and a bound-position count n', exactly the section 4.1 model.  The families
- * (AuthCredential, ProfileKeyCredential) live in GER-M8-04, where the attribute
- * vectors are assembled (scalar attributes such as the auth redemption date are
+ * (AuthCredential, ProfileKeyCredential) live in the credential
+ * layer, where the attribute vectors are assembled (scalar
+ * attributes such as the auth redemption date are
  * pre-converted by the caller to their group element G_mi^mi before entering
  * the MAC).  No protocol logic, proofs, or wire objects beyond section 3.1 here.
  *
@@ -65,7 +66,7 @@ struct gy_group_server_public {
 
 /*
  * A MAC tag (t, U, V) (section 4.3).  Appears only nested inside credential
- * responses in later milestones; carries no standalone object header.
+ * responses; carries no standalone object header.
  */
 struct gy_group_mac_tag {
     uint8_t t[GY_GROUP_SCALAR_MAX];

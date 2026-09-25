@@ -98,3 +98,32 @@ target_compile_options(geryon_group_c448_demo PRIVATE ${GERYON_WARNINGS})
 
 add_test(NAME group_demo COMMAND geryon_group_demo)
 add_test(NAME group_c448_demo COMMAND geryon_group_c448_demo)
+
+# -----------------------------------------------------------------------------
+# The QUANTUM-SAFE GROUP (QSPGS) worked example: a multi-process (QSG_NMEMBERS
+# members + an untrusted coordinator) lifecycle over the PUBLIC quantum-safe
+# group API (geryon_qspgs.h / geryon_qsgroups_server.h) with real pairwise
+# M0-M7 sessions for group-key delivery.  Reuses the pure infra (demo_ipc.c,
+# filestore.c) from the messaging demo; all QSPGS-specific code lives in its own
+# sources.  One binary per HYBRID tier.
+set(GERYON_QSGROUP_DEMO_COMMON_SRC
+    qsgroup_demo_driver.c
+    qsgroup_coordinator.c
+    qsgroup_client.c
+    demo_ipc.c
+    filestore.c)
+
+add_executable(geryon_qsgroup_demo qsgroup_demo_main.c
+    ${GERYON_QSGROUP_DEMO_COMMON_SRC})
+target_link_libraries(geryon_qsgroup_demo PRIVATE
+    geryon geryon_qspgs geryon_qsgroups_server)
+target_compile_options(geryon_qsgroup_demo PRIVATE ${GERYON_WARNINGS})
+
+add_executable(geryon_qsgroup_h448_demo qsgroup_demo_h448_main.c
+    ${GERYON_QSGROUP_DEMO_COMMON_SRC})
+target_link_libraries(geryon_qsgroup_h448_demo PRIVATE
+    geryon geryon_qspgs geryon_qsgroups_server)
+target_compile_options(geryon_qsgroup_h448_demo PRIVATE ${GERYON_WARNINGS})
+
+add_test(NAME qsgroup_demo COMMAND geryon_qsgroup_demo)
+add_test(NAME qsgroup_h448_demo COMMAND geryon_qsgroup_h448_demo)

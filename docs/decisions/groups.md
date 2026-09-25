@@ -760,7 +760,7 @@ decided, D-GRP-10 withdrawn).
   A global strict check makes role-addition a fail-closed wire
   event across all groups; the cleaner answer is a per-group
   capability epoch.
-- **Decision (2026-09-03, user confirmed, GER-GRPVER §11 all six
+- **Decision (2026-09-03, user confirmed, group format-versioning plan §11 all six
   points):** every group carries a 2-byte big-endian
   format_version, CHOSEN AT CREATION, IMMUTABLE for the life of
   the group, BOUND into the GroupID (the suite hash includes it),
@@ -816,5 +816,5 @@ decided, D-GRP-10 withdrawn).
 - **Consequence:** the tiering stays crisp - classical group implies
   classical transport; post-quantum implies the M9 QSPGS group over
   hybrid transport. group_guard continues to reject a hybrid
-  custodian (GY_ERR_UNSUPPORTED via a NULL group tier). GER-GRPVER
+  custodian (GY_ERR_UNSUPPORTED via a NULL group tier). The format-version epoch
   reserves nothing for tier/transport decoupling.

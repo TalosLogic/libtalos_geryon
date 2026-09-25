@@ -15,11 +15,11 @@
 
 /*
  * Verifiable encryption of UID and ProfileKey under GroupSecretParams
- * (GROUP_SPEC section 6, [CPZ] section 4/5.11), GER-M8-05.  A deterministic,
+ * (GROUP_SPEC section 6, [CPZ] section 4/5.11).  A deterministic,
  * unique-ciphertext symmetric scheme (CCA-secure in the ROM under DDH): the
  * group server stores and routes member identities without learning them, and
  * the encryption relations later become predicate lines inside the credential
- * presentations (section 6.5, in GER-M8-04's pi_A / pi_P).  This unit provides
+ * presentations (section 6.5, in the credential pi_A / pi_P).  This unit provides
  * Enc / Dec and the ciphertext objects; the presentation predicates live with
  * the presentations.
  *

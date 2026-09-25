@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 /*
- * Group persistence callbacks (GROUP_SPEC section 10, D-GRP-7), GER-M8-09.
+ * Group persistence callbacks (GROUP_SPEC section 10, D-GRP-7).
  *
  * A dedicated, minimal store for the group vertical: the group system is a
  * parallel vertical (D-GRP-2) over core/ + schnorr only, so it does NOT reuse

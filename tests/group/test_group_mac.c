@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the [CPZ] section 3.1 algebraic MAC (GROUP_SPEC section 4,
- * GER-M8-03): ServerSecretParams KeyGen, ServerPublicParams iparams (C_W, I),
+ * Tests for the [CPZ] section 3.1 algebraic MAC (GROUP_SPEC section 4):
+ * ServerSecretParams KeyGen, ServerPublicParams iparams (C_W, I),
  * MAC and Verify over group-element attributes, and the section 9 object
  * encodings, on both classical tiers and both credential-family key shapes
  * (n' = 3 for sk_A, n' = 4 for sk_P).

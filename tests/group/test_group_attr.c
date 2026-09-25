@@ -2,11 +2,11 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for credential attribute assembly (GROUP_SPEC section 3.2/3.3,
- * GER-M8-04 task 0): the redemption-date scalar and auth M3 = G_m3^m3, and the
+ * Tests for credential attribute assembly (GROUP_SPEC section 3.2/3.3): the
+ * redemption-date scalar and auth M3 = G_m3^m3, and the
  * AuthCredential (M1, M2, M3) and ProfileKeyCredential (M1, M2, M3, M4)
  * attribute vectors, on both classical tiers.  Also checks that the assembled
- * vectors MAC and verify through the GER-M8-03 algebraic MAC.
+ * vectors MAC and verify through the algebraic MAC.
  */
 
 #include <stdint.h>

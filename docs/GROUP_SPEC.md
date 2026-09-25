@@ -593,7 +593,7 @@ docs/ENCODE_TO_GROUP.md):
    geryon realizes M3 via the provider primitive
    talos_hash_to_g1_<t>, hashing the "grp-m3" domain over the
    (ProfileKey, UID) inputs; the exact input encoding is pinned
-   in §2.3 / GER-M8-02.
+   in §2.3.
 4. Byte compatibility (255 tier): encode is deterministic, so
    oracle byte-compat with zkgroup requires the provider's
    forward map to equal the dalek / RFC 9496 map and the padding
@@ -999,7 +999,7 @@ deployer's (D-GRP-2). "Access role" is the API term, distinct
 from D-GRP-3's fixed protocol-role strings used as FS UserID
 labels.
 
-### 10.1. Group format version (GER-GRPVER, D-GRP-12)
+### 10.1. Group format version (D-GRP-12)
 
 A group's FORMAT VERSION is its capability epoch: a 2-byte
 big-endian value, chosen when the group is created, IMMUTABLE for
@@ -1189,7 +1189,7 @@ presentations, replayed presentations, non-matching commitments,
 decode-failure paths, transcript malleability: item reordering or
 boundary shifts must change the FS challenge).
 
-### 12.1. Coverage traceability (GER-M8-10)
+### 12.1. Coverage traceability
 
 Each requirement maps to the asset that asserts it; all run under
 CTest (the `*_vectors` self-KATs SKIP-77 until their frozen vector

@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the conjunction-proof wiring (GROUP_SPEC section 5, GER-M8-04): the
+ * Tests for the conjunction-proof wiring (GROUP_SPEC section 5): the
  * gy_group_tier gen_prove_conj / gen_verify_conj adapters over libtalos_schnorr's
  * sound conjunction primitive, on both classical tiers.  Exercises the width
  * normalization (the 255 adapter repacks 56 -> 32, the 448 adapter casts

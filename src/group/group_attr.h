@@ -14,8 +14,8 @@
 
 /*
  * Credential attribute assembly (GROUP_SPEC section 3.2/3.3, [CPZ] section 5.3/
- * 5.4), GER-M8-04 task 0: the group-element attribute vectors Mi that feed the
- * GER-M8-03 algebraic MAC (group_mac.h).  The MAC is generic over Mi[] points;
+ * 5.4): the group-element attribute vectors Mi that feed the
+ * algebraic MAC (group_mac.h).  The MAC is generic over Mi[] points;
  * this unit builds those points from a UID, a redemption date, and a ProfileKey
  * per the two credential families.  No MAC, proof, or wire logic here.
  *

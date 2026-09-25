@@ -8,9 +8,12 @@ preserved exactly as in the classical suites (no transcript signatures). The
 hybrid design is geryon's own (see [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md)),
 not Signal's PQXDH. Protocol code is clean-room from the Signal specifications;
 primitives come from permissively-licensed libraries by preference. The core
-public API is the installed header `include/geryon.h`; an opt-in private-group
-vertical (v1.4.0) adds `include/geryon_group.h` (client) and
-`include/geryon_group_server.h` (server).
+public API is the installed header `include/geryon.h`; two opt-in private-group
+verticals add their own headers: a classical group system (v1.4.0)
+adds `include/geryon_group.h` (client) and `include/geryon_group_server.h`
+(server), and a quantum-safe group system (v1.5.0) adds
+`include/geryon_qspgs.h` (client) and `include/geryon_qsgroups_server.h`
+(server).
 
 ## Cipher suites
 
@@ -144,10 +147,40 @@ deployment that does not use groups links none of it.
 
 The classical group type provides **no** post-quantum confidentiality or
 anonymity (its guarantees rest on discrete-log assumptions), exactly like the
-classical messaging suites; a post-quantum group system is planned as a
-follow-on. Link `geryon_group` (client) and/or `geryon_groups_server` (server);
-both are `EXCLUDE_FROM_ALL`. See [docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) and the
-worked example in [examples/README.md](examples/README.md).
+classical messaging suites. Link `geryon_group` (client) and/or
+`geryon_groups_server` (server); both are `EXCLUDE_FROM_ALL`. See
+[docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) and the worked example in
+[examples/README.md](examples/README.md).
+
+## Quantum-safe private groups (opt-in)
+
+v1.5.0 adds a quantum-safe private group system (QSPGS) as a second opt-in
+vertical, side by side with the classical one, so a deployment can use either,
+both, or neither. Group authentication is post-quantum throughout: members
+present under per-version rerandomized ML-DSA keys (KR-ML-DSA), so the server
+and other members cannot link a member across group versions or to its
+long-term identity.
+
+- **Client** (`include/geryon_qspgs.h`): the group client *extends* a custodian.
+  All group secret state (the group key, per-epoch user keys, the member's
+  rerandomizable signing key) seals into the custodian's existing store, and
+  nothing derived is cached. The identity key certifies the member's base
+  verification key and per-epoch user key, binding membership to the custodied
+  identity without any transcript signature.
+- **Server** (`include/geryon_qsgroups_server.h`): a *separate, stateless*
+  target that holds only the service keys and verifies cores, appendix lines,
+  and bearer tokens; it never touches the messaging custodian. The client/server
+  split is enforced at link time.
+- **Versioned state with an appendix log.** A group advances through
+  admin-signed cores (the membership snapshot) and member-appended lines (joins,
+  leaves, key refreshes, attribute changes) that an admin later folds into a new
+  core. Each group is created at an immutable format epoch and field-AEAD choice
+  bound into its signed header; field encryption is pinned per group
+  (ChaCha20-Poly1305 default or AEGIS-256) with no downgrade path.
+
+Link `geryon_qspgs` (client) and/or `geryon_qsgroups_server` (server); both are
+`EXCLUDE_FROM_ALL`. See [docs/QSPGS_SPEC.md](docs/QSPGS_SPEC.md) and the worked
+example in [examples/README.md](examples/README.md).
 
 ## Building
 
@@ -223,8 +256,10 @@ cmake --build build --target format-check
 - [docs/DESIGN.md](docs/DESIGN.md) - whole-system design overview.
 - [docs/HYBRID_SPEC.md](docs/HYBRID_SPEC.md) - the normative specification for
   the hybrid suites (geryon's own PQ-hybrid design).
-- [docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) - the private group system (the
-  classical [CPZ] design; opt-in vertical).
+- [docs/GROUP_SPEC.md](docs/GROUP_SPEC.md) - the classical private group system
+  (the [CPZ] design; opt-in vertical).
+- [docs/QSPGS_SPEC.md](docs/QSPGS_SPEC.md) - the quantum-safe private group
+  system (QSPGS, the [CFG+] design; opt-in vertical).
 - [docs/PQ_COMPARISON.md](docs/PQ_COMPARISON.md) - the hybrid design rationale
   against Signal's PQ approach.
 - [CHANGELOG.md](CHANGELOG.md) - broad strokes per release.

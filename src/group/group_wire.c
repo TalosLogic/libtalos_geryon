@@ -20,15 +20,17 @@
 /*
  * Common canonical wire encodings for the group objects (GROUP_SPEC section 9).
  * These are sk-free (they only serialize/parse public objects), so they are
- * COMMON to the client and server facades (GER-M8-07): the client decodes what
+ * COMMON to the client and server facades: the client decodes what
  * it receives and the server encodes what it sends, but neither needs
  * ServerSecretParams.  Keeping them here, off both the client-only and
  * server-only crypto TUs, is what lets the object-size and round-trip helpers be
  * linked by either facade.  The object header helpers live at the top; the
- * per-object encode/decode follow.  GER-M8-08 added the blind-issuance objects
+ * per-object encode/decode follow.  A later split added the blind-issuance
+ * objects
  * (section 3.3), the ProfileKeyVersion, and the GROUP_KEY_DISTRIBUTION envelope
  * frame (section 9 item 4) at the bottom.  The one variable-length wire object,
- * the member-entry list (section 9 item 2), is deferred to GER-M8-09 with the
+ * the member-entry list (section 9 item 2), is deferred to the state layer
+ * with the
  * persisted member-list shape it shares (Split C).
  */
 
@@ -511,7 +513,7 @@ gy_group_pk_pres_decode(const struct gy_group_tier *tier,
 }
 
 /* ------------------------------------------------------------------------- *
- * Blind-issuance objects (section 3.3 / 5.3, GER-M8-08): ProfileKeyCommitment,
+ * Blind-issuance objects (section 3.3 / 5.3): ProfileKeyCommitment,
  * ProfileKeyCredentialRequest, ProfileKeyCredentialResponse.  Each is tagged;
  * fields are serialized in struct-declaration order.
  * ------------------------------------------------------------------------- */
@@ -744,7 +746,7 @@ gy_group_pk_response_decode(const struct gy_group_tier *tier,
 }
 
 /* ------------------------------------------------------------------------- *
- * ProfileKeyVersion (section 3.3, grp-pkv; GER-M8-08 Split B): a tagged object
+ * ProfileKeyVersion (section 3.3, grp-pkv; Split B): a tagged object
  * wrapping the fixed 32-byte identifier.  Tier-independent payload width, but
  * the object header still carries the suite_id tag for a uniform wire surface.
  * ------------------------------------------------------------------------- */
@@ -792,7 +794,7 @@ gy_group_pk_version_decode(const struct gy_group_tier *tier,
 }
 
 /* ------------------------------------------------------------------------- *
- * GROUP_KEY_DISTRIBUTION envelope frame (section 9 item 4, GER-M8-08 Path A):
+ * GROUP_KEY_DISTRIBUTION envelope frame (section 9 item 4, Path A):
  * a D-GEN-1 typed envelope (version || suite || msg_type || GroupMasterKey)
  * framed and validated here in the group vertical so proto/envelope.c stays
  * group-unaware.  The payload is exactly the GroupMasterKey; strict parse.
@@ -856,7 +858,7 @@ gy_group_key_distribution_decode(const struct gy_group_tier *tier,
 }
 
 /* ------------------------------------------------------------------------- *
- * FetchGroupMembers member-entry list (section 7.7 / 9 item 2, GER-M8-09
+ * FetchGroupMembers member-entry list (section 7.7 / 9 item 2,
  * Split C): the ONE variable-length group wire object.  Tagged, a 2-byte BE
  * count, then fixed-width entries (has_profile_key || role || UidCiphertext ||
  * ProfileKeyCiphertext), the invited pk slot all-zero.  Membership is transient

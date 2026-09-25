@@ -17,7 +17,7 @@
 
 /*
  * AuthCredential issuance and its correctness proof (GROUP_SPEC section 5.1,
- * [CPZ] section 3.2/5.9), GER-M8-04.  Non-blind issuance: the issuer MACs the
+ * [CPZ] section 3.2/5.9).  Non-blind issuance: the issuer MACs the
  * AuthCredential attributes (M1, M2, M3) under sk_A and proves the MAC is
  * consistent with the published ServerPublicParams iparams_A, so a malicious
  * issuer cannot hand out a credential keyed to anything other than iparams_A.

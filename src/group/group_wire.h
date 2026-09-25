@@ -20,14 +20,14 @@
  * credential response) are untagged and do not use this header.
  *
  * The object-type registry is frozen at first published KATs (the section 2.2
- * label-registry rule); later milestones append, never renumber.
+ * label-registry rule); later versions append, never renumber.
  */
 
 #define GY_GROUP_WIRE_VERSION 0x01
 #define GY_GROUP_OBJ_HDR_LEN 3
 
-/* Object-type registry (section 9 item 3).  GER-M8-03 defines the one
- * top-level object of the algebraic-MAC layer; GER-M8-04+ append below. */
+/* Object-type registry (section 9 item 3).  The algebraic-MAC layer
+ * defines the one top-level object; the credential layers append below. */
 #define GY_GOBJ_SERVER_PUBLIC                                                  \
     0x01 /* ServerPublicParams iparams (section 4.2) */
 #define GY_GOBJ_AUTH_RESPONSE 0x02 /* AuthCredentialResponse (section 5.1) */
@@ -35,17 +35,17 @@
     0x03 /* AuthCredentialPresentation (section 5.2.1) */
 #define GY_GOBJ_PK_PRESENTATION                                                \
     0x04 /* ProfileKeyCredentialPresentation (section 5.2.2) */
-/* GER-M8-08 (blind issuance, section 3.3 / 5.3, and the ProfileKeyVersion). */
+/* Blind issuance (section 3.3 / 5.3, and the ProfileKeyVersion). */
 #define GY_GOBJ_PK_COMMITMENT 0x05 /* ProfileKeyCommitment (section 3.3) */
 #define GY_GOBJ_PK_REQUEST                                                     \
     0x06 /* ProfileKeyCredentialRequest (section 3.3 / 5.3) */
 #define GY_GOBJ_PK_RESPONSE                                                    \
     0x07 /* ProfileKeyCredentialResponse (section 3.3 / 5.3) */
 #define GY_GOBJ_PK_VERSION 0x08 /* ProfileKeyVersion (section 3.3, grp-pkv) */
-/* GER-M8-09 (the FetchGroupMembers list, section 7.7 / 9 item 2). */
+/* The FetchGroupMembers list (section 7.7 / 9 item 2). */
 #define GY_GOBJ_MEMBER_LIST                                                    \
     0x09 /* member-entry list (the ONE var-length obj) */
-/* GER-M8-11 (the group public key, section 3.4): exported by the founder for
+/* The group public key (section 3.4): exported by the founder for
  * the server to verify presentations against this group. */
 #define GY_GOBJ_GROUP_PUBLIC 0x0A /* GroupPublicParams (A, B) (section 3.4) */
 
@@ -68,13 +68,13 @@ int gy_group_obj_check_header(const struct gy_group_tier *tier,
  * GROUP_KEY_DISTRIBUTION (GROUP_SPEC section 9 item 4, D-GRP-6): the ONE piece
  * of group data that crosses a pairwise M0-M7 session.  It is a D-GEN-1 typed
  * envelope (GY_WIRE_VERSION || suite_id || msg_type || payload), msg_type 0x03,
- * whose payload is the group format version (BE16, GER-GRPVER) followed by the
+ * whose payload is the group format version (BE16) followed by the
  * GroupMasterKey (tier->master_key_len bytes), nothing else.  The version rides
  * here so a joining member learns the group's capability epoch from the same
  * trusted message that carries the key.  It shares the D-GEN-1 msg_type
  * byte-space with the messaging
  * envelope (0x01 INIT, 0x02 DR, session/recv.h) but is framed and validated
- * HERE in the group vertical (GER-M8-08 Path A): the messaging codec
+ * HERE in the group vertical (Path A): the messaging codec
  * (proto/envelope.c) stays group-unaware and correctly rejects 0x03 as a
  * reserved msg_type.  The application demultiplexes on the msg_type byte and
  * decides when to send / whether to accept (D-SES-1); the receiver rederives

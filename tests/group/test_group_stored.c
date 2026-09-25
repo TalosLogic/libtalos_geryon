@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * GER-M8-09 increment 3: the store-integrated operation wrappers (the group
+ * The store-integrated operation wrappers (the group
  * analogue of how gy_send / gy_recv persist records at their success point).
  * A real client<->server flow drives each wrapper, then the store is inspected
  * to confirm the output was persisted; a fault-injected store confirms the

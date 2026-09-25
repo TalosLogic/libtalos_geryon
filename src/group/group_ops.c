@@ -14,9 +14,10 @@
 #include "util.h"
 
 /*
- * GER-M8-06: the ten client-side group operations, pure composition over the
- * GER-M8-03/04/05 units.  The only non-trivial cryptography introduced here is
- * the ProfileKeyVersion HKDF (Split B); everything else forwards to the existing
+ * The ten client-side group operations, pure composition over the
+ * algebraic-MAC, credential, and presentation units.  The only
+ * non-trivial cryptography introduced here is the ProfileKeyVersion
+ * HKDF (Split B); everything else forwards to the existing
  * credential / presentation / verifiable-encryption calls, adding the operation
  * framing (GROUP_SPEC section 7) and the transactional zeroization those calls
  * do not own.

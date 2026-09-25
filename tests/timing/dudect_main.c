@@ -59,6 +59,11 @@ extern const struct gy_dudect_target target_group_blind_issue_255;
 extern const struct gy_dudect_target target_group_blind_issue_448;
 extern const struct gy_dudect_target target_group_present_verify_255;
 extern const struct gy_dudect_target target_group_present_verify_448;
+extern const struct gy_dudect_target target_krmldsa_randsk_44;
+extern const struct gy_dudect_target target_krmldsa_randsk_87;
+extern const struct gy_dudect_target target_qspgs_member_open_44;
+extern const struct gy_dudect_target target_qspgs_member_open_87;
+extern const struct gy_dudect_target target_qspgs_token_check;
 
 static const struct gy_dudect_target *const target_registry[] = {
     &target_sentinel_leak,
@@ -85,6 +90,11 @@ static const struct gy_dudect_target *const target_registry[] = {
     &target_group_blind_issue_448,
     &target_group_present_verify_255,
     &target_group_present_verify_448,
+    &target_krmldsa_randsk_44,
+    &target_krmldsa_randsk_87,
+    &target_qspgs_member_open_44,
+    &target_qspgs_member_open_87,
+    &target_qspgs_token_check,
     NULL,
 };
 

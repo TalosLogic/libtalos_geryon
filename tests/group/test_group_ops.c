@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * GER-M8-06 property tests: the ten client-side group operations (GROUP_SPEC
+ * Property tests: the ten client-side group operations (GROUP_SPEC
  * section 7), driven as a two-party lifecycle (a member "client" and a stateful
  * test "server" holding ServerSecretParams and the authoritative member list) on
  * BOTH classical tiers.  Exercises every operation round-trip and the negative
@@ -10,10 +10,11 @@
  * non-day-aligned date, malformed fetch entry, over-cap fetch).
  *
  * The server-side crypto (issue / verify / blind-issue) is the existing
- * GER-M8-04/05 surface, called directly here; GER-M8-07 repackages it as a
- * standalone target.  Membership state is held in this test (the library never
+ * credential surface, called directly here; the server target
+ * repackages it as a standalone target.  Membership state is held
+ * in this test (the library never
  * stores it, section 10); the member-list container here is the provisional
- * GER-M8-06 view (Split A).
+ * client-side view (Split A).
  */
 
 #include <stdint.h>

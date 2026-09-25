@@ -20,31 +20,33 @@
 
 /*
  * The ten client-side group operations (GROUP_SPEC section 7, [CPZ] section
- * 5.6-5.7), GER-M8-06.  This unit is pure COMPOSITION of the GER-M8-03/04/05
+ * 5.6-5.7).  This unit is pure COMPOSITION of the lower-layer
  * machinery (algebraic MAC, credentials, presentations, verifiable encryption)
  * into the operations a group member performs; it introduces no new group
  * primitive (D-GRP-1) and no new frozen crypto except the ProfileKeyVersion
  * derivation below.
  *
- * Split of duties (GER-M8-06 review, 2026-09-01):
+ * Split of duties (2026-09-01):
  *
  *   - The SERVER-side crypto of each operation (issue, verify a presentation,
  *     blind-issue) already exists in group_cred.c / group_pres.c /
- *     group_issue.c and is exercised directly; GER-M8-07 repackages it as a
+ *     group_issue.c and is exercised directly; the server target repackages
+ * it as a
  *     standalone stateless target.  This unit is the CLIENT side.
  *
  *   - MEMBERSHIP STATE is server-authoritative and never stored by the library
  *     (GROUP_SPEC section 10, D-GRP-7).  The only member-list structure the
  *     library owns is the transient DECRYPTED VIEW that FetchGroupMembers
- *     returns (section 7.7).  Its shape here is PROVISIONAL: GER-M8-09 owns the
+ *     returns (section 7.7).  Its shape here is PROVISIONAL: the state layer
+ * owns the
  *     store callbacks, rederive-on-load, the zeroization sweep, and freezing
  *     GY_GROUP_MAX_ENTRIES and the persisted entry layout (Split A).  Do not
  *     treat gy_group_member{,_ct} or GY_GROUP_MAX_ENTRIES as wire- or
- *     storage-stable before GER-M8-09.
+ *     storage-stable before the state layer lands.
  *
  *   - The ProfileKeyVersion "grp-pkv" derivation is computed here (a single
  *     HKDF); its CANONICAL WIRE encoding, and the blind-issuance object wire +
- *     GOBJ tags, are deferred to GER-M8-08 (Split B).  These operations pass
+ *     GOBJ tags, are deferred to the wire layer (Split B).  These operations pass
  *     the section 3.3 objects (commitment, request, response) in memory only.
  *
  * No operation caches a derived secret; GroupSecretParams is rederived by the
@@ -55,7 +57,7 @@
 /*
  * FetchGroupMembers input bound (GROUP_SPEC section 10, D-SES-4 pattern):
  * at most this many entries are processed per fetch; applications may lower it,
- * never raise it.  FROZEN at GER-M8-09 (Split A): the value and the member-entry
+ * never raise it.  FROZEN (Split A): the value and the member-entry
  * wire layout (fixed-width, gy_group_member_list_{encode,decode}) are stable
  * from here.  Default 1024 per section 10.
  */
@@ -76,7 +78,7 @@
  * A raw, server-authoritative member entry as returned by FetchGroupMembers
  * (section 7.7): the two verifiable-encryption ciphertexts plus the opaque Role.
  * An INVITED member (section 7.9) has no ProfileKeyCiphertext: has_profile_key
- * is 0 and pk_ct is unused.  PROVISIONAL layout (Split A; GER-M8-09).
+ * is 0 and pk_ct is unused.  PROVISIONAL layout (Split A).
  */
 struct gy_group_member_ct {
     struct gy_group_uid_ct uid_ct;
@@ -108,7 +110,7 @@ struct gy_group_member {
  *   PRK = HKDF-Extract(salt = "geryon.1.<suite>.grp-pkv", IKM = ProfileKey||UID)
  *   version = HKDF-Expand(PRK, info = "geryon.1.<suite>.grp-pkv", L = 32)
  * out receives GY_GROUP_PK_VERSION_BYTES bytes.  Returns GY_OK or a negative
- * GY_ERR_*.  (Its wire encoding is GER-M8-08, Split B.)
+ * GY_ERR_*.  (Its wire encoding is in the wire layer, Split B.)
  */
 int gy_group_profile_key_version(const struct gy_group_tier *tier,
                                  const uint8_t uid[GY_GROUP_UID_BYTES],
@@ -116,7 +118,7 @@ int gy_group_profile_key_version(const struct gy_group_tier *tier,
                                  uint8_t out[GY_GROUP_PK_VERSION_BYTES]);
 
 /*
- * ProfileKeyVersion canonical wire encoding (GROUP_SPEC section 9, GER-M8-08,
+ * ProfileKeyVersion canonical wire encoding (GROUP_SPEC section 9,
  * Split B): the tagged object GY_GOBJ_PK_VERSION carrying the fixed 32-byte
  * identifier.  The version is a tier-independent 32-byte value, but the object
  * header still binds the suite_id tag for a uniform wire surface.  Encode needs
@@ -258,7 +260,7 @@ int gy_group_fetch_members(const struct gy_group_tier *tier,
                            size_t *out_count);
 
 /*
- * FetchGroupMembers list wire encoding (GROUP_SPEC section 9 item 2, GER-M8-09
+ * FetchGroupMembers list wire encoding (GROUP_SPEC section 9 item 2,
  * Split C): the ONE variable-length group wire object, the server-returned raw
  * member entries.  Tagged GY_GOBJ_MEMBER_LIST, then a 2-byte big-endian entry
  * count (<= GY_GROUP_MAX_ENTRIES) followed by that many FIXED-WIDTH entries,

@@ -18,7 +18,7 @@
 #include "util.h"
 
 /*
- * GER-M8-07: the sk-free proof-statement layer shared by the client-role and
+ * The sk-free proof-statement layer shared by the client-role and
  * server-role facades.  Bodies are the [CPZ]-transcribed builders moved verbatim
  * from group_cred.c / group_pres.c / group_issue.c; only their linkage changed
  * (file-local statics -> shared gy_group_ symbols) so both facades can call them

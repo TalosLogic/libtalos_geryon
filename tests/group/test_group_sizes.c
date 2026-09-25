@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Object-size cross-check (GROUP_SPEC section 9, GER-M8-04/05 acceptance:
- * "sizes match Table 1"), both classical tiers.  Every encodable M8-04/05
+ * Object-size cross-check (GROUP_SPEC section 9, credential-layer acceptance:
+ * "sizes match Table 1"), both classical tiers.  Every encodable credential-layer
  * object is produced, encoded, and its byte length asserted against the exact
  * element-count formula
  *

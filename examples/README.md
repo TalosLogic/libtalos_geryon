@@ -407,7 +407,8 @@ Three members carry extra assertions that a real app's tests would want:
 
 The group API is **classical-suite only** (`geryon_c25519`, `geryon_c448`); a
 hybrid-suite custodian's group calls return `GY_ERR_UNSUPPORTED`. Post-quantum
-groups are a separate future construction with their own API. As with the
+groups are a separate construction with their own API, the quantum-safe private
+group system (QSPGS), demonstrated below. As with the
 messaging demo, building this against the still-unfrozen group API dogfooded it
 and surfaced additive gaps (the `gy_custodian_group_open` clock reopen above,
 `gy_custodian_group_export_group_public_params`, the server-side
@@ -417,4 +418,76 @@ public parameters into the server verify calls).
 ```sh
 ctest --test-dir build -R "group_demo|group_c448_demo"   # exit 0 = pass
 ./build/examples/geryon_group_demo                        # phase-by-phase log
+```
+
+# geryon QUANTUM-SAFE GROUP end-to-end example
+
+A third worked example (`geryon_qsgroup_demo`, and its 448-tier twin
+`geryon_qsgroup_h448_demo`) drives the quantum-safe private group system (QSPGS,
+the [CFG+] design, `include/geryon_qspgs.h` + `include/geryon_qsgroups_server.h`)
+end to end across **five real processes** (a founder/admin plus four members).
+Like the other examples it reuses the untrusted-relay topology: the parent is
+the coordinator (object store + relay), it forks the members, and all traffic
+goes through it with no direct member-to-member path. It is a **worked example,
+not a security proof.** The single driver (`qsgroup_demo_run`) is suite-agnostic
+across the two hybrid tiers; the two binaries differ only in the
+`GY_SUITE_*` value their thin main passes.
+
+## What a quantum-safe group is here, and what it is not
+
+As with the classical group type, group *messaging* is ordinary pairwise
+messaging fanned out (no group ratchet): members become acquainted, stand up 1:1
+sessions, and the group key rides those sessions. What QSPGS adds is
+**unlinkable post-quantum membership**: each member presents under a per-version
+rerandomized ML-DSA verification key (KR-ML-DSA), the encrypted member list
+advances through admin-signed cores and member-appended appendix lines, and the
+server verifies cores, appendix lines, and bearer tokens without holding any
+group secret. The identity key certifies each member's base verification key and
+per-epoch user key, so membership binds to the custodied identity with no
+transcript signature.
+
+## Client / server split
+
+As in the classical example this is an ABI boundary, not just a convention: the
+client is `gy_custodian_qsgroup_*` (`include/geryon_qspgs.h`), sealing all group
+state (the group key, per-epoch user keys, the member's rerandomizable signing
+key) into the existing custodian store; the server
+(`include/geryon_qsgroups_server.h`) is a separate, stateless target that holds
+only the service keys and verifies submissions. A client binary never links the
+server target (`geryon_qsgroups_server`), and an `nm` scope audit backs this.
+
+## What it demonstrates
+
+The lifecycle runs in barrier-gated phases (A, B, D, E, F, G, H, I):
+
+- **A / B - acquaintance and pairwise sessions.** Members exchange registration
+  and user keys (the identity-signed reguser / invaccept certifications), verify
+  each other, and stand up 1:1 geryon sessions that persist for group-key
+  delivery and group messaging.
+- **D - group creation and invite.** The founder creates the group
+  (`gy_custodian_qsgroup_create`, pinning the format epoch and field AEAD),
+  invites each member (a PENDING roster entry), and delivers the group key over
+  the pairwise session; each member accepts and settles into the roster.
+- **E - rotating edit + removal.** The founder opens a join link, removes a
+  member, and rotates the group key; surviving members install the rotated key
+  and the removed member confirms its fetch now fails.
+- **F - group message fan-out.** The founder fans a chain of group messages out
+  over the pairwise sessions; receivers recover the reordered chain through the
+  ratchet skip store.
+- **G / H - admin operations and appendix lines.** Admin edits end to end, plus
+  member-appended appendix lines (refresh, modAttr, addUser) that every member
+  folds via Fetch and an admin folds via Consolidate.
+- **I - join-link resurrection.** The removed member rejoins through the
+  surviving join link (JoinViaLink), which the design keeps valid across the
+  key rotation.
+
+## Scope
+
+QSPGS is **hybrid-suite only** (`geryon_h25519_512`, `geryon_h448_1024`); it
+composes KR-ML-DSA, which needs the hybrid tier's ML-DSA. It ships side by side
+with the classical group type, not as a replacement.
+
+```sh
+ctest --test-dir build -R "qsgroup_demo|qsgroup_h448_demo"   # exit 0 = pass
+./build/examples/geryon_qsgroup_demo                          # phase-by-phase log
 ```

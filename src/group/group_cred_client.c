@@ -14,7 +14,7 @@
 #include "util.h"
 
 /*
- * AuthCredential client role (GER-M8-07): the user-side verification of the
+ * AuthCredential client role: the user-side verification of the
  * issuance proof pi_I.  No ServerSecretParams; sk-free.  The issuance half lives
  * in group_cred_server.c and the two never share a translation unit (the
  * client/server structural split, GROUP_SPEC section 8.3).

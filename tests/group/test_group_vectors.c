@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  *
  * Frozen self-KAT check for the classical group system parameters
- * (GROUP_SPEC section 2, GER-M8-02).  Recomputes the NUMS generators,
+ * (GROUP_SPEC section 2).  Recomputes the NUMS generators,
  * GroupSecretParams, and GroupPublicParams for the fixed GroupMasterKey on both
  * tiers and asserts they reproduce the committed bytes in
  * group_params_vectors.h.  There is no external oracle (D-GRP-9); the vectors
@@ -167,7 +167,7 @@ dump(void)
            " * SPDX-License-Identifier: AGPL-3.0-only\n"
            " *\n"
            " * Frozen self-KAT vectors for the classical group system\n"
-           " * parameters (GROUP_SPEC section 2, GER-M8-02).  Captured from a\n"
+           " * parameters (GROUP_SPEC section 2).  Captured from a\n"
            " * clean build for the fixed GroupMasterKey k0[i] = i + 1.\n"
            " */\n\n");
     printf(

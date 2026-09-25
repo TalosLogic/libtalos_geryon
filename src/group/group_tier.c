@@ -15,7 +15,7 @@
 #include "talos_schnorr_448.h"
 
 /* ------------------------------------------------------------------------- *
- * Conjunction-proof adapters (GROUP_SPEC section 5, GER-M8-04).  The provider
+ * Conjunction-proof adapters (GROUP_SPEC section 5).  The provider
  * gen_prove_conj / gen_verify_conj take matrices whose innermost dimension is
  * the tier point/scalar width (32 on 255, 56 on 448), so - unlike the 1-D vtable
  * ops - they cannot be assigned directly to a width-normalized function pointer.

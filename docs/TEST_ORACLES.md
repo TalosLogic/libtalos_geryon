@@ -70,6 +70,21 @@ Regenerating any vector file requires updating the corresponding row here
   (`tests/group/test_group_stmt_vectors.c`, both tiers) and the round-trip
   property tests remain the always-on checks; the oracle is the independent
   structural cross-check.
+- **The quantum-safe group vertical (QSPGS, `geryon_qspgs` /
+  `geryon_qsgroups_server`) uses NO oracle.** The authentication primitive is
+  [CFG+]'s key-rerandomizable ML-DSA (KR-ML-DSA), and the oracle
+  investigation found NO public [CFG+] authors' reference implementation and no
+  third-party KR-ML-DSA implementation (only stock ML-DSA / FIPS 204 code, which
+  geryon already links via liboqs). So the KATs are geryon's own reviewed
+  self-generated vectors, checked against the [CFG+] Figure 3/4 equations, and
+  every KAT signature is additionally cross-verified by the UNMODIFIED public
+  liboqs `gy_mldsa<set>_verify` (that check ties the bespoke rerandomizing signer
+  to the standard verifier with no shared code). The vectors are FROZEN as of
+  the v1.5.0 close-out, pinned to geryon's reading of the
+  [CFG+] 2026/453 preprint (D-QGS-10): `tests/core_hooks/krmldsa_kat.h`,
+  `tests/qspgs/qspgs_keys_kat.h`, `tests/qspgs/qspgs_wire_kat.h`. No entry is
+  added to the licensing-boundary Oracles table; the self-generated posture
+  stands, revisited only if the authors later publish acceptably licensed code.
 
 ## Oracles
 

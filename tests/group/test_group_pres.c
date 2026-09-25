@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Tests for the AuthCredentialPresentation pi_A (GROUP_SPEC section 5.2.1,
- * GER-M8-04), both classical tiers: an honest presentation of a valid
+ * Tests for the AuthCredentialPresentation pi_A (GROUP_SPEC section 5.2.1),
+ * both classical tiers: an honest presentation of a valid
  * credential verifies; a tampered proof/commitment, a lied-about redemption
  * date, and a wrong UID are rejected; the attached UidCiphertext decrypts to the
  * presenter's UID; and the presentation encoding round-trips.

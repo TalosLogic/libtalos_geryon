@@ -19,8 +19,8 @@ and geryon_h448_1024 suites (D-XED-9). A git submodule at
 `third_party/ed448goldilocks-code`, pinned to tag v1.0.3.
 
 Integration is DIRECT compilation of the 448 C-source slice, not
-`add_subdirectory` and not ExternalProject (D-XED-12 Build, amended 2026-08-20;
-GER-M6-02). Rationale: libdecaf's top-level `project(DECAF ... LANGUAGES C CXX)`
+`add_subdirectory` and not ExternalProject (D-XED-12 Build, amended 2026-08-20).
+Rationale: libdecaf's top-level `project(DECAF ... LANGUAGES C CXX)`
 would drag a C++ toolchain into geryon's build under either of those mechanisms
 even though zero C++ is compiled into the static library, and geryon links NO
 C++ runtime (`libstdc++`) at runtime by policy. geryon therefore compiles only
@@ -31,5 +31,4 @@ docs/decisions/xeddsa.md D-XED-12/13.
 
 The RFC 8032 Ed448 scheme functions (`decaf_ed448_sign` / `decaf_ed448_verify`)
 compute a DIFFERENT signature scheme than XEd448 and are called ONLY by the 448
-validation-gate tests; geryon's own code never references them (nm scope check,
-GER-M6-02).
+validation-gate tests; geryon's own code never references them (nm scope check).

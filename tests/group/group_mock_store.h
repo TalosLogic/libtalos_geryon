@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Jason Crawford
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Shared in-memory mock gy_group_store for the group state tests (GER-M8-09).
+ * Shared in-memory mock gy_group_store for the group state tests.
  * static inline so multiple test TUs can include it without a link clash or an
  * unused-function warning under -Werror.  Supports fault injection: fail_store
  * fails every store(); fail_remove_at fails the Nth remove().

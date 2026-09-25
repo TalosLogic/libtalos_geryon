@@ -20,9 +20,9 @@ survives, while offline deniability is preserved (no transcript signatures).
 The hybrid construction is geryon's own, not Signal's PQXDH, and is specified
 normatively in [HYBRID_SPEC.md](HYBRID_SPEC.md). Protocol code is clean-room
 from specifications; primitives come from permissively-licensed libraries by
-preference. The core public API is the installed header `include/geryon.h`; an
-opt-in private-group vertical adds two further public headers (see Private
-groups, below).
+preference. The core public API is the installed header `include/geryon.h`; two
+opt-in private-group verticals (classical and quantum-safe) each add two further
+public headers (see Private groups and Quantum-safe private groups, below).
 
 ## Cipher suites
 
@@ -171,8 +171,9 @@ and the vendored `libtalos_schnorr` proof engine.
   Schnorr conjunction NIZKs, with verifiable ElGamal-style encryption of the UID
   and ProfileKey so the server learns neither. Deniable (the proofs are NIZKs,
   not transferable signatures). Classical only: the guarantees rest on
-  discrete-log, so no PQ confidentiality or anonymity (D-GRP-11); a post-quantum
-  group system (QSPGS) is a planned follow-on, not a retrofit of this type.
+  discrete-log, so no PQ confidentiality or anonymity (D-GRP-11); the
+  quantum-safe group system (QSPGS, below) is a distinct type that ships side by
+  side, not a retrofit of this one.
 - **No group ratchet.** Group messages fan out over the 1:1 sessions above; the
   GroupMasterKey reaches a new member inside a 1:1 session (a
   `GROUP_KEY_DISTRIBUTION` envelope, D-GRP-6). GroupSecretParams are rederived
@@ -182,10 +183,50 @@ and the vendored `libtalos_schnorr` proof engine.
   feature set cannot change under the clients in it, and a client that lacks a
   newer version declines to join rather than mishandle it.
 
+## Quantum-safe private groups (opt-in vertical)
+
+A quantum-safe private group system (QSPGS; normative in
+[QSPGS_SPEC.md](QSPGS_SPEC.md)), added in v1.5.0 as a second group vertical
+alongside the classical one. It is a separate set of libraries (all
+`EXCLUDE_FROM_ALL`), layered like the messaging library over `core/`, and shares
+no code with the classical group type; a deployment uses either, both, or
+neither. Group authentication is post-quantum throughout.
+
+- **Two roles, split at link time.** The CLIENT (`include/geryon_qspgs.h`)
+  extends a custodian: all group secret state (the group key, per-epoch user
+  keys, the member's rerandomizable signing key) seals into the custodian's store
+  and nothing derived is cached. The SERVER
+  (`include/geryon_qsgroups_server.h`) is a separate, stateless target holding
+  only the service keys; it verifies cores, appendix lines, and bearer tokens and
+  never touches the messaging custodian. An `nm` scope audit proves the client
+  archive carries no server-side check symbol.
+- **Unlinkable membership via rerandomizable ML-DSA (KR-ML-DSA).** Each member
+  presents under a per-version rerandomized ML-DSA verification key derived from
+  its base key, so the server and other members cannot link a member's actions
+  across group versions or to its long-term identity. The identity key certifies
+  the member's base verification key and its per-epoch user key, binding
+  membership to the custodied identity with no transcript signature (deniability
+  of membership is the one documented regression, since these two registration
+  objects are identity-signed).
+- **Versioned symmetric state with an appendix log.** The member list is
+  AEAD-encrypted under a rotatable group key. A group advances through
+  admin-signed cores (the authoritative snapshot) and member-appended lines
+  (joins, leaves, key refreshes, attribute changes) that an admin later folds
+  into a new core. Harvested group state exposes nothing to a later quantum
+  adversary. Rotating edits stage the new group key and commit only on server
+  acceptance, so a rejected write never strands the admin.
+- **Immutable per-group epoch and field AEAD.** Each group is created at an
+  immutable format epoch and field-AEAD choice (ChaCha20-Poly1305 default or
+  AEGIS-256), both bound into the signed header, so there is no downgrade path
+  and an existing group never changes shape under the clients in it. Member UIDs
+  are a fixed 16 bytes, so a corrupt server learns no per-entry length class.
+
 ## Public API
 
-`include/geryon.h` is the core installed header (the opt-in group vertical adds
-`geryon_group.h` / `geryon_group_server.h`); every exported symbol starts
+`include/geryon.h` is the core installed header (the opt-in classical group
+vertical adds `geryon_group.h` / `geryon_group_server.h`, and the quantum-safe
+group vertical adds `geryon_qspgs.h` / `geryon_qsgroups_server.h`); every
+exported symbol starts
 `gy_`. A `gy_custodian` is the public entry object (D-CUST-1; design in
 docs/CUSTODY_SPEC.md): `gy_custodian_create` mints it from a suite id, the
 store callback table, an unlock credential, this device's ids, an optional
